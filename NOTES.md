@@ -4,6 +4,31 @@ A plain-English explanation of each file as it gets built.
 
 ---
 
+## Pivot: Food-only → All GTA Deals
+
+Originally this app targeted food/restaurant deals only. We pivoted to **all deal types** after finding that GTA food deal subreddits are not very active. The new scope:
+
+- **Subreddits:** r/TorontoDeals, r/frugalcanada, r/canadiandeals (replacing r/toronto)
+- **Categories:** Food & Drink, Electronics & Tech, Clothing & Fashion, Home & Garden, Health & Beauty, Entertainment, Other
+- **Scope:** Online/Canada-wide deals are included alongside local GTA deals
+- **Classifier:** Upgraded from 3 labels (yes/no/uncertain) to 5 labels that also capture online vs local
+- **Extractor:** Now outputs a `category` field and uses Haiku's `scope` signal to inform extraction
+
+---
+
+## config.py
+
+Central place for all settings. Changing subreddits, keywords, schedule times, or expiry rules happens here — no other files need to be touched.
+
+- `SUBREDDITS` — The three subreddits we scrape: r/TorontoDeals, r/frugalcanada, r/canadiandeals. Previously just r/toronto (food-only era).
+- `KEYWORDS` — The pre-AI filter list. Covers deal language, promotions, retail events, electronics, budget language, and food. Broadened from food-only during the pivot.
+- `POSTS_PER_SUBREDDIT` — 100 posts fetched per subreddit per run.
+- `SCHEDULE_TIMES` — Pipeline runs at 6am, 11am, 4pm, 9pm daily.
+- `DATABASE_PATH` — Points to `data/deals.db`.
+- `EXPIRY_HOURS` — 48 hours before a `limited_time` deal is auto-expired.
+
+---
+
 ## collector/reddit.py
 
 Fetches posts from Reddit without needing an API key, using Reddit's public RSS feeds.
@@ -12,7 +37,7 @@ Fetches posts from Reddit without needing an API key, using Reddit's public RSS 
 
 - `collect_all()` — Loops through all subreddits defined in `config.py` and calls `fetch_posts` on each. If one subreddit fails (e.g. Reddit is slow), the rest still run. Returns one flat list of all posts combined.
 
-**Result:** A list of 125 plain Python dicts (25 per subreddit), each representing one Reddit post.
+**Result:** Up to 300 posts (100 per subreddit × 3 subreddits), each a plain Python dict representing one Reddit post.
 
 ---
 
@@ -26,21 +51,21 @@ A cheap pre-AI filter that removes posts with no deal language before any API ca
 
 - `filter_posts(posts)` — Runs `passes_filter` on every post and keeps only the ones that pass. Prints how many survived.
 
-**Result:** ~25-35 posts out of 125 that contain deal-related language, ready for AI classification.
+**Result:** Roughly 30-60 posts out of 300 that contain deal-related language, ready for AI classification.
 
 ---
 
 ## ai/classifier.py
 
-Sends each filtered post to Claude Haiku to decide if it's a food deal. Haiku is fast and cheap — we use it here because the decision is simple (yes/no/uncertain).
+Sends each filtered post to Claude Haiku to make two cheap decisions: is this a deal, and is it online or local? Haiku is fast and cheap — we use it here because both decisions are simple binary calls that don't need Sonnet's power.
 
-- `SYSTEM_PROMPT` — The instruction we give Haiku before showing it any post. Defines what counts as a food deal and tells it to respond with exactly one word. This keeps responses short and costs minimal tokens.
+- `SYSTEM_PROMPT` — Tells Haiku what counts as a deal across all categories (not just food), what to reject (posts asking for deals, not sharing them), and how to distinguish online/Canada-wide deals from local GTA ones.
 
-- `classify_post(post)` — Sends one post to Haiku with `max_tokens=10` (a single word never exceeds that). Returns `"yes"`, `"no"`, or `"uncertain"`.
+- `classify_post(post)` — Sends one post to Haiku with `max_tokens=10`. Returns one of five labels: `yes_online`, `yes_local`, `uncertain_online`, `uncertain_local`, or `no`.
 
-- `classify_posts(posts)` — Loops through all filtered posts and sorts them into three buckets: yes, no, uncertain. Returns a dict with all three lists. The `yes` and `uncertain` posts get passed to Sonnet next.
+- `classify_posts(posts)` — Loops through all filtered posts. Splits each label on `_` to get the deal verdict (`yes`/`no`/`uncertain`) and the scope (`online`/`local`). Adds `scope` directly to the post dict so Sonnet has that info without re-deciding it. Returns the same three-bucket dict (`yes`, `no`, `uncertain`) — the scheduler doesn't need to change.
 
-**Result:** Posts split into three groups. Only `yes` and `uncertain` move forward to the extractor — `no` posts are discarded.
+**Result:** Posts split into three groups, each post now carrying a `scope` field. Only `yes` and `uncertain` move forward to the extractor — `no` posts are discarded.
 
 ---
 
