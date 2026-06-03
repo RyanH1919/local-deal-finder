@@ -13,21 +13,15 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 # Subreddits to scrape — add or remove here without touching pipeline logic
 SUBREDDITS = [
-    "toronto",
-    "torontofood",
-    "mississauga",
-    "GTA",
-    "deals",
-    "brampton",
+    "TorontoDeals",
     "frugalcanada",
-    "askTO",
-
+    "canadiandeals",
 ]
 
 # Keywords for pre-AI filter — post must contain at least one (case-insensitive)
 KEYWORDS = [
     # Deal language
-    "deal", "deals", "discount", "discounted", "sale", "clearance",
+    "deal", "deals", "discount", "discounted", "sale", "clearance", "markdown",
     # Percentage/price off
     "% off", "percent off", "half off", "half price",
     # Free stuff
@@ -42,20 +36,24 @@ KEYWORDS = [
     "flash sale", "one day only", "weekend only",
     # Openings
     "opening", "grand opening", "soft opening", "now open",
-    # Meal deals
+    # Food deals
     "happy hour", "lunch special", "dinner special", "early bird",
     "prix fixe", "set menu", "all you can eat", "ayce", "buffet",
+    "takeout deal", "pickup deal", "dine in deal",
     # Loyalty / rewards
     "loyalty", "reward", "rewards", "points", "membership",
-    # Specific deal types
-    "2 for 1", "two for one", "twofer", "combo", "bundle",
+    # Quantity deals
+    "2 for 1", "two for one", "twofer", "combo", "bundle", "multipack",
+    # Shipping
     "free delivery", "free shipping", "no delivery fee",
-    # Food-specific
-    "tasting menu", "dine in deal", "takeout deal", "pickup deal",
-    # Budget/cheap food
-    "cheap", "cheap eats", "budget", "affordable", "inexpensive",
-    "under $10", "under $15", "under $20",
-    "best value", "worth it", "hidden gem",
+    # Electronics / tech
+    "open box", "refurbished", "price drop", "price match",
+    # Budget language
+    "cheap", "budget", "affordable", "inexpensive", "best value",
+    "under $10", "under $20", "under $50", "under $100",
+    # Retail events
+    "black friday", "cyber monday", "boxing day", "prime day",
+    "back to school", "seasonal sale", "overstock", "liquidation",
 ]
 
 # How many posts to fetch per subreddit per run
