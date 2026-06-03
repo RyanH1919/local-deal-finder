@@ -11,11 +11,28 @@ REDDIT_USER_AGENT = os.getenv("REDDIT_USER_AGENT", "windows:local-deal-finder:v1
 # Anthropic API key (loaded from .env)
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
+# Google Maps API key (Geocoding + Places APIs)
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+
+# Google Custom Search Engine ID — create at https://programmablesearchengine.google.com/
+# Set it to "Search the entire web", then copy the cx value here
+GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID")
+
 # Subreddits to scrape — add or remove here without touching pipeline logic
 SUBREDDITS = [
+    # Community subreddits — organic, unfiltered deal mentions
+    "toronto",
+    "askTO",
+    "mississauga",
+    "brampton",
+    "GTA",
+    # Deal communities
     "TorontoDeals",
     "frugalcanada",
     "canadiandeals",
+    "deals",
+    # Food-focused
+    "torontofood",
 ]
 
 # Keywords for pre-AI filter — post must contain at least one (case-insensitive)
