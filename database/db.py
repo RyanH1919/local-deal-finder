@@ -1,6 +1,6 @@
 import sqlite3
 from datetime import datetime, timezone
-from database.models import CREATE_DEALS_TABLE
+from database.models import CREATE_DEALS_TABLE, MIGRATE_ADD_CATEGORY
 from config import DATABASE_PATH
 
 
@@ -13,6 +13,11 @@ def get_connection() -> sqlite3.Connection:
 def init_db():
     with get_connection() as conn:
         conn.execute(CREATE_DEALS_TABLE)
+        # Run migrations — safe to run on existing DBs
+        try:
+            conn.execute(MIGRATE_ADD_CATEGORY)
+        except sqlite3.OperationalError:
+            pass  # column already exists
 
 
 def url_exists(source_url: str) -> bool:
@@ -31,10 +36,10 @@ def save_deal(deal: dict):
     with get_connection() as conn:
         conn.execute("""
             INSERT OR IGNORE INTO deals
-                (business_name, deal_description, location, source_url, subreddit, posted_at, fetched_at, urgency, is_expired)
+                (business_name, deal_description, category, location, source_url, subreddit, posted_at, fetched_at, urgency, is_expired)
             VALUES
-                (:business_name, :deal_description, :location, :source_url, :subreddit, :posted_at, :fetched_at, :urgency, 0)
-        """, {**deal, "fetched_at": datetime.now(timezone.utc)})
+                (:business_name, :deal_description, :category, :location, :source_url, :subreddit, :posted_at, :fetched_at, :urgency, 0)
+        """, {**deal, "fetched_at": datetime.now(timezone.utc), "category": deal.get("category", "other")})
 
 
 def save_deals(deals: list[dict]):

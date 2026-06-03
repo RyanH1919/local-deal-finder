@@ -7,13 +7,21 @@ from database.db import init_db, filter_new_posts, save_deals, expire_old_deals
 from config import SCHEDULE_TIMES, EXPIRY_HOURS
 
 
-def run_pipeline():
-    print("\n[pipeline] starting run...")
-    posts = collect_all()
+def run_pipeline(test_mode: bool = False):
+    print("\n[pipeline] starting run..." + (" [TEST MODE]" if test_mode else ""))
+    posts = collect_all(limit_subreddits=1 if test_mode else None)
     posts = filter_new_posts(posts)
     posts = filter_posts(posts)
     classified = classify_posts(posts)
-    deals = extract_posts(classified["yes"] + classified["uncertain"])
+    candidates = (
+        classified.get("yes_local", []) +
+        classified.get("yes_online", []) +
+        classified.get("uncertain_local", []) +
+        classified.get("uncertain_online", [])
+    )
+    if test_mode:
+        candidates = candidates[:5]  # max 5 extractor calls in test mode
+    deals = extract_posts(candidates, use_haiku=test_mode)
     save_deals(deals)
     expire_old_deals(EXPIRY_HOURS)
     print(f"[pipeline] done — {len(deals)} new deals saved\n")

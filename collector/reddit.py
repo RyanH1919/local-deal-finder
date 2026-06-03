@@ -185,7 +185,7 @@ def fetch_posts(subreddit: str) -> list[dict]:
     return fetch_posts_rss(subreddit)
 
 
-def collect_all() -> list[dict]:
+def collect_all(limit_subreddits: int = None) -> list[dict]:
     """Collect posts from all configured subreddits with rate limiting."""
     all_posts = []
 
@@ -194,7 +194,9 @@ def collect_all() -> list[dict]:
     method = "PRAW (authenticated)" if praw_available else "RSS (no auth)"
     print(f"[collector] using {method}")
 
-    for i, subreddit in enumerate(SUBREDDITS):
+    subreddits = SUBREDDITS[:limit_subreddits] if limit_subreddits else SUBREDDITS
+
+    for i, subreddit in enumerate(subreddits):
         try:
             posts = fetch_posts(subreddit)
             all_posts.extend(posts)
@@ -203,8 +205,8 @@ def collect_all() -> list[dict]:
             print(f"[collector] {subreddit}: failed — {e}")
 
         # Rate limit: wait between requests (skip delay after last subreddit)
-        if i < len(SUBREDDITS) - 1:
+        if i < len(subreddits) - 1:
             time.sleep(REQUEST_DELAY)
 
-    print(f"[collector] total: {len(all_posts)} posts from {len(SUBREDDITS)} subreddits")
+    print(f"[collector] total: {len(all_posts)} posts from {len(subreddits)} subreddits")
     return all_posts
