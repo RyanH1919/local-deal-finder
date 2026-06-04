@@ -13,12 +13,16 @@ app.add_middleware(
 
 
 @app.get("/deals")
-def get_deals(location: str = None, urgency: str = None):
+def get_deals(location: str = None, urgency: str = None, scope: str = None, category: str = None):
     deals = get_active_deals()
     if location:
         deals = [d for d in deals if d.get("location") and location.lower() in d["location"].lower()]
     if urgency:
         deals = [d for d in deals if d.get("urgency") == urgency]
+    if scope:
+        deals = [d for d in deals if d.get("scope") == scope]
+    if category:
+        deals = [d for d in deals if d.get("category") == category]
     return deals
 
 

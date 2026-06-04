@@ -20,12 +20,6 @@ GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID")
 
 # Subreddits to scrape — add or remove here without touching pipeline logic
 SUBREDDITS = [
-    # Community subreddits — organic, unfiltered deal mentions
-    "toronto",
-    "askTO",
-    "mississauga",
-    "brampton",
-    "GTA",
     # Deal communities
     "TorontoDeals",
     "frugalcanada",

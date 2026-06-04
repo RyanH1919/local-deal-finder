@@ -8,9 +8,9 @@ client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 _total_input_tokens = 0
 _total_output_tokens = 0
 
-SYSTEM_PROMPT = """You are a deal extractor for a local deal finder app.
+SYSTEM_PROMPT = """You are a deal extractor for a GTA and Canada deal finder app.
 
-You will receive a Reddit post that has been identified as a potential deal. Extract the deal details and return them as a JSON object with exactly these fields:
+You will receive a Reddit post that has been identified as a potential deal, along with a scope tag (local or online) pre-determined by a classifier. Extract the deal details and return them as a JSON object with exactly these fields:
 
 {
   "is_deal": true or false,
@@ -26,14 +26,15 @@ Rules:
 - category: use 'food' for restaurants/cafes/food trucks, 'grocery' for supermarkets/raw ingredients, 'electronics' for tech/gadgets, 'services' for dental/medical/professional, 'clothing' for apparel, 'software' for apps/subscriptions, 'other' for anything else
 - business_name should be null if no specific business is named
 - deal_description should be 1-2 sentences max, plain English
-- location should be null if not mentioned
+- location: if scope is local, try hard to extract a neighbourhood or city; if scope is online, set to null unless explicitly mentioned
 - urgency is limited_time if the deal has an end date or says today only / this week etc, ongoing if it is a permanent menu item or loyalty program, unknown if unclear
 - Return only the JSON object, no explanation"""
 
 
 def extract_post(post: dict, use_haiku: bool = False) -> Optional[dict]:
     global _total_input_tokens, _total_output_tokens
-    text = f"Title: {post['title']}\n\nBody: {post['body']}"
+    scope = post.get("scope", "online")
+    text = f"Scope: {scope}\n\nTitle: {post['title']}\n\nBody: {post['body']}"
     model = "claude-haiku-4-5-20251001" if use_haiku else "claude-sonnet-4-6"
     message = client.messages.create(
         model=model,
@@ -53,6 +54,7 @@ def extract_post(post: dict, use_haiku: bool = False) -> Optional[dict]:
         extracted["source_url"] = post["source_url"]
         extracted["subreddit"] = post["subreddit"]
         extracted["posted_at"] = post["posted_at"]
+        extracted["scope"] = scope
         return extracted
     except json.JSONDecodeError:
         print(f"[extractor] failed to parse JSON for: {post['title'][:60]}")
