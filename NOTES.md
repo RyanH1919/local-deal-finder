@@ -24,7 +24,7 @@ Central place for all settings. Changing subreddits, keywords, schedule times, o
 - `SUBREDDITS` — 4 active Canadian deal subreddits. r/TorontoDeals and community subs removed after testing — they had posts 1+ years old.
 - `KEYWORDS` — The pre-AI filter list. Covers deal language, promotions, retail events, electronics, budget language, and food.
 - `MAX_POST_AGE_DAYS` — Posts older than this (60 days) are dropped before keyword filter and AI. Prevents old stale deals from ever entering the pipeline.
-- `POSTS_PER_SUBREDDIT` — 100 posts fetched per subreddit per run (up to 400 total).
+- `SUBREDDITS_PER_RUN` — How many subreddits to hit per pipeline run. Each returns up to 25 posts (Reddit's hard RSS cap), so 4 subreddits = 100 posts total. Controls how long collection takes: (SUBREDDITS_PER_RUN - 1) × 61 seconds.
 - `SCHEDULE_TIMES` — Pipeline runs at 6am, 11am, 4pm, 9pm daily.
 - `DATABASE_PATH` — Points to `data/deals.db`.
 - `EXPIRY_HOURS` — 48 hours before a `limited_time` deal is auto-expired.
@@ -40,7 +40,7 @@ Fetches posts from Reddit without needing an API key, using Reddit's public RSS 
 
 - `collect_all(limit_subreddits)` — Loops through all subreddits defined in `config.py` and calls `fetch_posts` on each. If one subreddit fails (e.g. Reddit is slow), the rest still run. `limit_subreddits` caps how many subreddits are hit — used in test mode to keep costs low. Returns one flat list of all posts combined.
 
-**Result:** Up to 400 posts (100 per subreddit × 4 subreddits), each a plain Python dict representing one Reddit post.
+**Result:** Up to 100 posts (25 per subreddit × 4 subreddits), each a plain Python dict representing one Reddit post. Collection takes ~3 minutes in production due to the 61-second delay between subreddit requests.
 
 ---
 
@@ -95,6 +95,24 @@ Sends confirmed and uncertain posts to Claude Sonnet for full deal extraction. R
 **Output fields per deal:** `is_deal`, `category` (food/grocery/electronics/services/clothing/software/other), `business_name`, `deal_description`, `location`, `urgency`, `source_url`, `subreddit`, `posted_at`, `scope`.
 
 **Result:** A clean list of deal dicts with all fields filled in, ready to save to the database.
+
+---
+
+## database/models.py — `seen_urls` table (Flow 1 crawl log)
+
+A tiny table with two columns: `url` (PRIMARY KEY) and `seen_at` (timestamp). Its only job is to remember every URL that was sent to the AI — including posts Haiku rejected as "NO".
+
+**Why it exists:** Without this, every post Haiku rejects never lands in `deals`, so the dedup check against `deals` misses it, and it gets re-fetched and re-classified on every single pipeline run forever — wasted API cost.
+
+**Flow 1 only.** Flow 2 deliberately does NOT use this table. Flow 2 uses `content_hash` to decide whether to reprocess a website URL — it _wants_ to re-visit a URL if the page content has changed. `seen_urls` would block that.
+
+**How it works in the pipeline:**
+1. Fetch posts → `filter_unseen_posts()` checks `seen_urls`, drops anything already there
+2. Keyword filter runs on what's left
+3. `mark_urls_seen()` logs those URLs into `seen_urls` right before Haiku
+4. Haiku classifies → Sonnet extracts → saved to `deals`
+
+Result: a URL is processed by AI exactly once, whether it becomes a deal or gets rejected.
 
 ---
 

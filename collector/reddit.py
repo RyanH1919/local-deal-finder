@@ -1,44 +1,30 @@
 """
-Reddit data collector — fetches posts via PRAW (authenticated) or RSS (no auth).
+Reddit data collector — fetches posts via public RSS feeds, no auth required.
 
-Two collection methods, used in priority order:
-1. PRAW (OAuth API) — up to 100 posts per subreddit, clean data, requires API keys
-2. RSS feed (reddit.com/r/{sub}/new/.rss) — fallback, ~25 posts, no auth needed
-
-PRAW is preferred because it returns more posts and markdown body text.
-RSS is the zero-config fallback that works without any API credentials.
-
-Rate limiting is built in — 2-second delay between subreddit requests to
-avoid Reddit's throttling. HTTP requests retry up to 3 times with
-exponential backoff on failure.
+Endpoint: reddit.com/r/{subreddit}/new/.rss
+Returns up to 25 posts per subreddit (hard Reddit cap on RSS feeds).
+Rate limit: Reddit enforces 1 request/minute globally across all feeds — we wait
+61 seconds between subreddit requests (1s buffer over the 60s limit). HTTP
+requests retry up to 3 times with exponential backoff.
 """
 
 import time
 import requests
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
-from config import (
-    SUBREDDITS, REDDIT_USER_AGENT, REDDIT_CLIENT_ID,
-    REDDIT_CLIENT_SECRET, POSTS_PER_SUBREDDIT,
-)
+from config import SUBREDDITS, REDDIT_USER_AGENT, SUBREDDITS_PER_RUN
 from collector.clean import strip_html
 
 REDDIT_BASE = "https://www.reddit.com"
 HEADERS = {"User-Agent": REDDIT_USER_AGENT}
 RSS_NS = "http://www.w3.org/2005/Atom"
 
-# Rate limiting
-REQUEST_DELAY = 2  # seconds between subreddit requests
+REQUEST_DELAY = 61  # Reddit enforces 1 req/min globally; 61s gives a 1s buffer
 MAX_RETRIES = 3
-RETRY_BACKOFF = 2  # exponential backoff multiplier
+RETRY_BACKOFF = 2
 
 
 def _request_with_retry(url: str, params: dict = None) -> requests.Response:
-    """Make an HTTP GET request with retry logic and exponential backoff.
-
-    Retries on 429 (rate limited), 5xx (server errors), and connection errors.
-    Raises after MAX_RETRIES failures.
-    """
     for attempt in range(MAX_RETRIES):
         try:
             response = requests.get(url, headers=HEADERS, params=params, timeout=15)
@@ -69,80 +55,8 @@ def _request_with_retry(url: str, params: dict = None) -> requests.Response:
     raise requests.exceptions.RetryError(f"Failed after {MAX_RETRIES} attempts: {url}")
 
 
-# ---------------------------------------------------------------------------
-# PRAW collector (primary) — up to 100 posts, requires Reddit API credentials
-# ---------------------------------------------------------------------------
-
-_praw_reddit = None  # lazily initialized
-
-
-def _get_praw():
-    """Lazily initialize the PRAW Reddit instance. Returns None if creds missing."""
-    global _praw_reddit
-    if _praw_reddit is not None:
-        return _praw_reddit
-
-    if not REDDIT_CLIENT_ID or not REDDIT_CLIENT_SECRET:
-        return None
-
-    try:
-        import praw
-        _praw_reddit = praw.Reddit(
-            client_id=REDDIT_CLIENT_ID,
-            client_secret=REDDIT_CLIENT_SECRET,
-            user_agent=REDDIT_USER_AGENT,
-        )
-        return _praw_reddit
-    except Exception as e:
-        print(f"[collector] PRAW init failed: {e}")
-        return None
-
-
-def fetch_posts_praw(subreddit: str, limit: int = None) -> list[dict]:
-    """Fetch posts from Reddit via PRAW (authenticated OAuth API).
-
-    Returns up to `limit` posts with clean markdown body text.
-    Requires REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in .env.
-    """
-    reddit = _get_praw()
-    if reddit is None:
-        raise RuntimeError("PRAW not available — missing API credentials")
-
-    if limit is None:
-        limit = min(POSTS_PER_SUBREDDIT, 100)
-
-    sub = reddit.subreddit(subreddit)
-    posts = []
-    for submission in sub.new(limit=limit):
-        # Skip stickied/pinned mod posts — they're never deals
-        if submission.stickied:
-            continue
-
-        posted_at = None
-        if submission.created_utc:
-            posted_at = datetime.fromtimestamp(submission.created_utc, tz=timezone.utc)
-
-        posts.append({
-            "title": submission.title or "",
-            "body": submission.selftext or "",  # PRAW gives markdown, already clean
-            "source_url": f"{REDDIT_BASE}{submission.permalink}",
-            "subreddit": subreddit,
-            "posted_at": posted_at,
-        })
-    return posts
-
-
-# ---------------------------------------------------------------------------
-# RSS feed collector (fallback) — ~25 posts per subreddit, no auth needed
-# ---------------------------------------------------------------------------
-
-def fetch_posts_rss(subreddit: str) -> list[dict]:
-    """Fetch posts from Reddit's public RSS feed (Atom format).
-
-    Endpoint: reddit.com/r/{subreddit}/new/.rss
-    Returns ~25 posts. Body content is HTML — stripped to plain text.
-    No API credentials required.
-    """
+def fetch_posts(subreddit: str) -> list[dict]:
+    """Fetch posts from a subreddit via RSS. Returns up to ~25 posts."""
     url = f"{REDDIT_BASE}/r/{subreddit}/new/.rss"
     response = _request_with_retry(url)
 
@@ -161,7 +75,7 @@ def fetch_posts_rss(subreddit: str) -> list[dict]:
 
         posts.append({
             "title": title,
-            "body": strip_html(content),  # Clean HTML → plain text
+            "body": strip_html(content),
             "source_url": link,
             "subreddit": subreddit,
             "posted_at": posted_at,
@@ -169,32 +83,11 @@ def fetch_posts_rss(subreddit: str) -> list[dict]:
     return posts
 
 
-# ---------------------------------------------------------------------------
-# Main collection function
-# ---------------------------------------------------------------------------
-
-def fetch_posts(subreddit: str) -> list[dict]:
-    """Fetch posts from a subreddit. Tries PRAW first, falls back to RSS."""
-    try:
-        posts = fetch_posts_praw(subreddit)
-        if posts:
-            return posts
-    except Exception as e:
-        print(f"[collector] {subreddit}: PRAW failed ({e}), falling back to RSS...")
-
-    return fetch_posts_rss(subreddit)
-
-
-def collect_all(limit_subreddits: int = None) -> list[dict]:
-    """Collect posts from all configured subreddits with rate limiting."""
+def collect_all(limit_subreddits: int = SUBREDDITS_PER_RUN) -> list[dict]:
+    """Collect posts from configured subreddits with rate limiting."""
+    print(f"[collector] using RSS (no auth)")
     all_posts = []
-
-    # Log which method we're using
-    praw_available = _get_praw() is not None
-    method = "PRAW (authenticated)" if praw_available else "RSS (no auth)"
-    print(f"[collector] using {method}")
-
-    subreddits = SUBREDDITS[:limit_subreddits] if limit_subreddits else SUBREDDITS
+    subreddits = SUBREDDITS[:limit_subreddits]
 
     for i, subreddit in enumerate(subreddits):
         try:
@@ -204,7 +97,6 @@ def collect_all(limit_subreddits: int = None) -> list[dict]:
         except Exception as e:
             print(f"[collector] {subreddit}: failed — {e}")
 
-        # Rate limit: wait between requests (skip delay after last subreddit)
         if i < len(subreddits) - 1:
             time.sleep(REQUEST_DELAY)
 

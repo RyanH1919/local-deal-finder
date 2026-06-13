@@ -51,10 +51,13 @@ def extract_post(post: dict, use_haiku: bool = False) -> Optional[dict]:
             raw = raw[4:]
     try:
         extracted = json.loads(raw.strip())
-        extracted["source_url"] = post["source_url"]
-        extracted["subreddit"] = post["subreddit"]
-        extracted["posted_at"] = post["posted_at"]
-        extracted["scope"] = scope
+        extracted["source_url"]   = post["source_url"]
+        extracted["subreddit"]    = post["subreddit"]
+        extracted["posted_at"]    = post["posted_at"]
+        extracted["scope"]        = scope
+        extracted["source_type"]  = "social"
+        extracted["source_name"]  = "reddit"
+        extracted["ai_processed"] = True
         return extracted
     except json.JSONDecodeError:
         print(f"[extractor] failed to parse JSON for: {post['title'][:60]}")
