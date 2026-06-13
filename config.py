@@ -21,13 +21,15 @@ GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID")
 # Subreddits to scrape — add or remove here without touching pipeline logic
 SUBREDDITS = [
     # Deal communities
-    "TorontoDeals",
     "frugalcanada",
     "canadiandeals",
     "deals",
     # Food-focused
     "torontofood",
 ]
+
+# Posts older than this many days are skipped before keyword filter and AI
+MAX_POST_AGE_DAYS = 60
 
 # Keywords for pre-AI filter — post must contain at least one (case-insensitive)
 KEYWORDS = [
