@@ -69,8 +69,8 @@ KEYWORDS = [
     "back to school", "seasonal sale", "overstock", "liquidation",
 ]
 
-# How many posts to fetch per subreddit per run
-POSTS_PER_SUBREDDIT = 100
+# How many subreddits to hit per pipeline run (25 posts each, 61s apart)
+SUBREDDITS_PER_RUN = 4
 
 # Schedule times (24-hour format)
 SCHEDULE_TIMES = [

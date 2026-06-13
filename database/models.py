@@ -1,3 +1,10 @@
+CREATE_SEEN_URLS_TABLE = """
+CREATE TABLE IF NOT EXISTS seen_urls (
+    url     TEXT PRIMARY KEY,
+    seen_at DATETIME NOT NULL
+)
+"""
+
 CREATE_DEALS_TABLE = """
 CREATE TABLE IF NOT EXISTS deals (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -16,6 +23,7 @@ CREATE TABLE IF NOT EXISTS deals (
     fetched_at       DATETIME NOT NULL,
     urgency          TEXT NOT NULL DEFAULT 'unknown',
     content_hash     TEXT,
+    ai_processed     BOOLEAN NOT NULL DEFAULT 0,
     is_expired       BOOLEAN NOT NULL DEFAULT 0
 )
 """
