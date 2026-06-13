@@ -21,6 +21,13 @@ def url_exists(source_url: str) -> bool:
         return row is not None
 
 
+def get_content_hash(source_url: str) -> str | None:
+    """Return the stored content_hash for a URL, or None if we've never saved it."""
+    with get_connection() as conn:
+        row = conn.execute("SELECT content_hash FROM deals WHERE source_url = ?", (source_url,)).fetchone()
+        return row["content_hash"] if row else None
+
+
 def filter_new_posts(posts: list[dict]) -> list[dict]:
     new_posts = [post for post in posts if not url_exists(post["source_url"])]
     print(f"[db] {len(new_posts)} new posts (skipped {len(posts) - len(new_posts)} duplicates)")
@@ -30,11 +37,33 @@ def filter_new_posts(posts: list[dict]) -> list[dict]:
 def save_deal(deal: dict):
     with get_connection() as conn:
         conn.execute("""
-            INSERT OR IGNORE INTO deals
-                (business_name, deal_description, category, scope, location, source_url, subreddit, posted_at, fetched_at, urgency, is_expired)
+            INSERT INTO deals
+                (business_name, deal_description, category, scope, source_type, source_name,
+                 location, lat, lng, source_url, subreddit, posted_at, fetched_at, urgency,
+                 content_hash, is_expired)
             VALUES
-                (:business_name, :deal_description, :category, :scope, :location, :source_url, :subreddit, :posted_at, :fetched_at, :urgency, 0)
-        """, {**deal, "fetched_at": datetime.now(timezone.utc), "category": deal.get("category", "other"), "scope": deal.get("scope", "online")})
+                (:business_name, :deal_description, :category, :scope, :source_type, :source_name,
+                 :location, :lat, :lng, :source_url, :subreddit, :posted_at, :fetched_at, :urgency,
+                 :content_hash, 0)
+            ON CONFLICT(source_url) DO UPDATE SET
+                deal_description = excluded.deal_description,
+                category         = excluded.category,
+                urgency          = excluded.urgency,
+                content_hash     = excluded.content_hash,
+                fetched_at       = excluded.fetched_at,
+                is_expired       = 0
+        """, {
+            **deal,
+            "fetched_at": datetime.now(timezone.utc),
+            "category":     deal.get("category", "other"),
+            "scope":        deal.get("scope", "online"),
+            "source_type":  deal.get("source_type", "social"),
+            "source_name":  deal.get("source_name", "reddit"),
+            "lat":          deal.get("lat"),
+            "lng":          deal.get("lng"),
+            "subreddit":    deal.get("subreddit"),
+            "content_hash": deal.get("content_hash"),
+        })
 
 
 def save_deals(deals: list[dict]):

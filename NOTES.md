@@ -8,7 +8,7 @@ A plain-English explanation of each file as it gets built.
 
 Originally this app targeted food/restaurant deals only. We pivoted to **all deal types** after finding that GTA food deal subreddits are not very active. The new scope:
 
-- **Subreddits:** 10 subreddits — community ones (r/toronto, r/askTO, r/mississauga, r/brampton, r/GTA) + deal communities (r/TorontoDeals, r/frugalcanada, r/canadiandeals, r/deals) + food-focused (r/torontofood)
+- **Subreddits:** 4 active subreddits — r/frugalcanada, r/canadiandeals, r/deals, r/torontofood. Community subreddits and r/TorontoDeals were removed after testing showed they were low-activity with posts 1+ years old.
 - **Categories:** food, grocery, electronics, services, clothing, software, other
 - **Scope:** Online/Canada-wide deals are included alongside local GTA deals — Haiku classifies which is which
 - **Classifier:** Upgraded from 3 labels (yes/no/uncertain) to 5 labels that also capture online vs local, and now batches 10 posts per API call
@@ -21,9 +21,10 @@ Originally this app targeted food/restaurant deals only. We pivoted to **all dea
 
 Central place for all settings. Changing subreddits, keywords, schedule times, or expiry rules happens here — no other files need to be touched.
 
-- `SUBREDDITS` — 10 subreddits covering GTA community posts, Canadian deal communities, and food-focused subs.
+- `SUBREDDITS` — 4 active Canadian deal subreddits. r/TorontoDeals and community subs removed after testing — they had posts 1+ years old.
 - `KEYWORDS` — The pre-AI filter list. Covers deal language, promotions, retail events, electronics, budget language, and food.
-- `POSTS_PER_SUBREDDIT` — 100 posts fetched per subreddit per run (up to 1000 total).
+- `MAX_POST_AGE_DAYS` — Posts older than this (60 days) are dropped before keyword filter and AI. Prevents old stale deals from ever entering the pipeline.
+- `POSTS_PER_SUBREDDIT` — 100 posts fetched per subreddit per run (up to 400 total).
 - `SCHEDULE_TIMES` — Pipeline runs at 6am, 11am, 4pm, 9pm daily.
 - `DATABASE_PATH` — Points to `data/deals.db`.
 - `EXPIRY_HOURS` — 48 hours before a `limited_time` deal is auto-expired.
@@ -39,21 +40,25 @@ Fetches posts from Reddit without needing an API key, using Reddit's public RSS 
 
 - `collect_all(limit_subreddits)` — Loops through all subreddits defined in `config.py` and calls `fetch_posts` on each. If one subreddit fails (e.g. Reddit is slow), the rest still run. `limit_subreddits` caps how many subreddits are hit — used in test mode to keep costs low. Returns one flat list of all posts combined.
 
-**Result:** Up to 1000 posts (100 per subreddit × 10 subreddits), each a plain Python dict representing one Reddit post.
+**Result:** Up to 400 posts (100 per subreddit × 4 subreddits), each a plain Python dict representing one Reddit post.
 
 ---
 
 ## filter/keyword.py
 
-A cheap pre-AI filter that removes posts with no deal language before any API calls are made. Saves money.
+A cheap pre-AI filter that removes posts before any API calls are made. Two checks run in order — recency first, then keywords. Saves money.
 
 - `_PATTERNS` — A list of compiled regex patterns built once at import time from the keywords in `config.py`. Compiling upfront is faster than re-compiling on every post.
 
+- `is_recent(post)` — Checks if the post's `posted_at` is within `MAX_POST_AGE_DAYS` (60 days). If `posted_at` is missing (Flow 2 website posts have no date), it passes through. If the date can't be parsed for any reason, it passes through — we'd rather include an edge case than silently drop it.
+
 - `passes_filter(post)` — Combines the post title and body into one string, then checks if any keyword pattern matches. Uses `\b` word boundaries so "free" matches "free coffee" but not "freedom". Case-insensitive.
 
-- `filter_posts(posts)` — Runs `passes_filter` on every post and keeps only the ones that pass. Prints how many survived.
+- `filter_posts(posts)` — Runs recency check first, then keyword filter on what's left. Prints how many were dropped for age and how many survived keywords.
 
-**Result:** Roughly 50-150 posts out of 1000 that contain deal-related language, ready for AI classification.
+**Result:** Recent, deal-language posts only — ready for AI classification. Old posts are dropped here, not by AI.
+
+**Open issue:** `unknown` and `ongoing` urgency deals never auto-expire. A post that makes it through this filter could sit in the DB forever. Needs a solution before the frontend is built — see memory note.
 
 ---
 
@@ -97,8 +102,12 @@ Sends confirmed and uncertain posts to Claude Sonnet for full deal extraction. R
 
 Holds the SQL string that creates the deals table. Kept separate so the schema definition is in one obvious place and easy to change.
 
-- `source_url` has a `UNIQUE` constraint — this is the database-level duplicate guard. Even if the same post somehow gets through twice, SQLite will reject the second insert.
+- `source_url` has a `UNIQUE` constraint — this is the database-level duplicate guard, and the key both flows dedup against.
 - `category` defaults to `'other'` and `scope` defaults to `'online'` so old rows stay valid if the schema ever changes again.
+- **Source columns (Noah's hierarchical model):** `source_type` (`social` | `website`) + `source_name` (`reddit` or a domain like `joespizza.com`). Lets us add Twitter/etc. later without changing the schema. Defaults to `social`/`reddit` so Flow 1 deals don't need to set them.
+- **Location columns:** `lat` / `lng` (REAL, nullable) — only Flow 2 deals have coordinates from Google Places. Flow 1 leaves them NULL.
+- `subreddit` is nullable — only Flow 1 (Reddit) deals have one. Flow 2 website deals leave it NULL.
+- `content_hash` (nullable) — an MD5 fingerprint of the scraped page text, used by Flow 2 to detect when a business's deals have actually changed. Flow 1 leaves it NULL.
 
 **Note:** If you already have a `deals.db`, delete it and let the app recreate it — the schema has changed and there is no automatic migration.
 
@@ -114,7 +123,9 @@ All the functions for reading and writing to the SQLite database.
 
 - `url_exists()` / `filter_new_posts()` — Deduplication before the AI. Checks if a post's URL is already in the database. Called after collection so we never send a post to Claude that we've already processed.
 
-- `save_deal()` / `save_deals()` — Saves extracted deals including `category` and `scope`. `INSERT OR IGNORE` means if a duplicate somehow slips through, it's silently skipped instead of crashing. Both fields have `.get()` fallbacks so a missing key never causes a crash.
+- `get_content_hash(source_url)` — Returns the stored `content_hash` for a URL, or None if we've never saved it. Flow 2 uses this to compare a freshly scraped page against what we saw last time.
+
+- `save_deal()` / `save_deals()` — Saves a deal. Uses an **upsert** (`INSERT ... ON CONFLICT(source_url) DO UPDATE`): if the URL is new it inserts, if the URL already exists it updates the deal fields with the fresh content. This matters for Flow 2 — when a business updates the deals at the same URL, we update the row instead of ignoring it. Every field has a `.get()` fallback so a missing key never crashes the insert.
 
 - `get_active_deals()` — Returns all non-expired deals sorted newest first. This is what the API calls to serve the frontend.
 
@@ -147,5 +158,59 @@ A FastAPI backend that serves deal data from the database to the frontend over H
 - `POST /deals/{deal_id}/dismiss` — Marks a deal as expired when the user clicks dismiss on the frontend. The `{deal_id}` in the URL is the deal's database ID.
 
 **Result:** A running API that the frontend can fetch deals from and send dismiss actions to.
+
+---
+
+# Flow 2 — Google Maps + Website Scraping
+
+A second, separate pipeline that writes to the **same `deals.db`**. Flow 1 (Reddit) finds community-posted deals; Flow 2 goes straight to local businesses' own websites. See `docs/flow2_discussion.md` for the design decisions behind it.
+
+**Phase 1 (current):** no AI — raw scraped text goes to the DB so we can validate the pipeline end-to-end.
+**Phase 2 (later):** add Haiku extraction to turn raw text into clean deal descriptions.
+
+The whole flow today is a **dev/testing tool** triggered manually via `python main.py --search --item X --address Y`. The production version will be a scheduled backend crawl over fixed GTA areas (not built yet).
+
+---
+
+## search/geocoder.py
+
+- `geocode(address)` — Calls the Google Geocoding API to turn a street address into `(lat, lng)` coordinates. Raises `ValueError` if the address can't be resolved.
+
+---
+
+## search/places.py
+
+Talks to the Google Places API to find businesses near a point.
+
+- `find_nearby(lat, lng, item, radius_m)` — Returns businesses matching `item` (e.g. "pizza") within `radius_m`, each with name, address, coordinates, `place_id`, and distance. Sorted nearest-first.
+- `get_place_website(place_id)` — Second API call that fetches a business's website URL from the Places Details API. Returns None if the business has no website listed.
+- `_haversine_m()` / `format_distance()` — Helpers to compute straight-line distance between two coordinates and format it for display.
+
+---
+
+## scraper/website.py
+
+Crawls a business's own website looking for deal content. Uses `requests` + BeautifulSoup.
+
+- `scrape_business_website(url, business_name)` — Visits the homepage, follows up to `MAX_PAGES` links that look deal-related (`/specials`, `/offers`, etc., same domain only), and returns post-like dicts for any page with deal signals. The page text is cleaned (scripts/nav/footer stripped) and capped at 3000 chars.
+- JS-heavy sites (React/Vue SPAs) return limited content — Playwright could be added later for those.
+
+---
+
+## search/deal_finder.py
+
+- `find_deals_for_business(business_name, website_url)` — Thin wrapper that scrapes the business website and returns the results. (Previously also searched Reddit RSS — removed, since Flow 1 already covers Reddit and Flow 2 must not touch it.)
+
+---
+
+## search/runner.py — Flow 2 orchestrator (dev-only)
+
+Ties Flow 2 together: geocode → find nearby businesses → scrape each website → save to DB.
+
+- `run_search(item, address, radius_m)` — For each of the (up to 10) nearest businesses: fetches its website, scrapes deal pages, then builds a deal dict from what we already know (business name, coordinates, address from Google; category from the search term). **No AI in Phase 1** — the scraped text becomes the `deal_description` directly.
+
+- **Change detection via content hash:** before saving each scraped page, it computes `md5(page_text)` and compares it to the stored `content_hash` for that URL via `get_content_hash()`. If the hash matches, the deals haven't changed — it skips the page entirely (and later, skips the AI call). If the hash is new or different, it saves/updates the deal. This is what stops us re-processing unchanged websites every crawl.
+
+**Result:** Running the `--search` CLI scrapes nearby businesses and writes Flow 2 deals (with `source_type="website"`) into the same `deals.db` that the API serves.
 
 ---
