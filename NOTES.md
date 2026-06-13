@@ -96,6 +96,10 @@ Sends confirmed and uncertain posts to Claude Sonnet for full deal extraction. R
 
 **Result:** A clean list of deal dicts with all fields filled in, ready to save to the database.
 
+- `extract_website_deal(post, business_name, location, lat, lng, domain, content_hash)` — **Flow 2 (Phase 2)** version. Uses a separate `WEBSITE_SYSTEM_PROMPT` framed for scraped business-site text instead of Reddit. We already know `business_name`/`location`/`lat`/`lng` from Google Places, so we staple those on and only ask Haiku for `deal_description`, `category`, `urgency`, and `scope` — saving tokens. **Always returns a dict** (never None): non-deals and parse failures still produce a row with `ai_processed=False` so the `content_hash` is saved and the page is never re-AI'd.
+
+- `reset_token_counts()` / `get_token_counts()` — Let Flow 2's runner zero the token counters at the start of a search and print usage at the end (Flow 1 resets them inside `extract_posts`).
+
 ---
 
 ## database/models.py — `seen_urls` table (Flow 1 crawl log)
@@ -183,8 +187,8 @@ A FastAPI backend that serves deal data from the database to the frontend over H
 
 A second, separate pipeline that writes to the **same `deals.db`**. Flow 1 (Reddit) finds community-posted deals; Flow 2 goes straight to local businesses' own websites. See `docs/flow2_discussion.md` for the design decisions behind it.
 
-**Phase 1 (current):** no AI — raw scraped text goes to the DB so we can validate the pipeline end-to-end.
-**Phase 2 (later):** add Haiku extraction to turn raw text into clean deal descriptions.
+**Phase 1 (done):** no AI — raw scraped text went to the DB so we could validate the pipeline end-to-end.
+**Phase 2 (current):** Haiku reads each new/changed page and extracts a clean deal (`deal_description`, `category`, `urgency`, `scope`). Real deals are saved with `ai_processed=True` so the API serves them; non-deals are still saved with `ai_processed=False` so their `content_hash` is stored and we never re-AI the same page.
 
 The whole flow today is a **dev/testing tool** triggered manually via `python main.py --search --item X --address Y`. The production version will be a scheduled backend crawl over fixed GTA areas (not built yet).
 
@@ -225,10 +229,18 @@ Crawls a business's own website looking for deal content. Uses `requests` + Beau
 
 Ties Flow 2 together: geocode → find nearby businesses → scrape each website → save to DB.
 
-- `run_search(item, address, radius_m)` — For each of the (up to 10) nearest businesses: fetches its website, scrapes deal pages, then builds a deal dict from what we already know (business name, coordinates, address from Google; category from the search term). **No AI in Phase 1** — the scraped text becomes the `deal_description` directly.
+- `run_search(item, address, radius_m)` — For each of the (up to 10) nearest businesses: fetches its website, scrapes deal pages, and for each new/changed page calls `extract_website_deal()` (Haiku). Business name, coordinates, and address come from Google Places (we already know them, so we don't waste tokens asking the AI); Haiku supplies the clean `deal_description`, `category`, `urgency`, and `scope`.
+
+**Scope for Flow 2:** the business is physically local (found via Places near an address), but the *deal* might not be. Haiku outputs `local` or `online`, defaulting to `local` and only choosing `online` for clearly online-only / national-chain promos. "Both in-store and online" and "unclear" both collapse to `local` — our `scope` column stays two-valued, same as Flow 1.
+
+**Known issues / future work:**
+- **Per-page duplicates:** one business's site can have several deal pages (homepage, /specials, /deals). Each page is its own `source_url` → its own Haiku call → its own row, so a business may appear multiple times for the same promo. Deduping by deal *content* (not URL) is a future task — we'll see how bad it is on real output first.
+- **No batching:** Flow 2 calls Haiku one page at a time. Batching would only save the small repeated system prompt (page tokens dominate and don't shrink), and risks the model mixing up which text maps to which output, so it's deferred. Revisit if speed/cost becomes a problem.
 
 - **Change detection via content hash:** before saving each scraped page, it computes `md5(page_text)` and compares it to the stored `content_hash` for that URL via `get_content_hash()`. If the hash matches, the deals haven't changed — it skips the page entirely (and later, skips the AI call). If the hash is new or different, it saves/updates the deal. This is what stops us re-processing unchanged websites every crawl.
 
-**Result:** Running the `--search` CLI scrapes nearby businesses and writes Flow 2 deals (with `source_type="website"`) into the same `deals.db` that the API serves.
+**Result:** Running the `--search` CLI scrapes nearby businesses and writes Flow 2 deals (with `source_type="website"`) into the same `deals.db` that the API serves. The summary line distinguishes real deals from rejected rows, e.g. `3 rows saved/updated (0 deals, 3 non-deals)` — non-deals are stored only to keep their content hash so they're never re-AI'd.
+
+**Real-world yield note:** in testing, pizza *chains* (Pizzaiolo, D-Square) publish deals on clean scrapable pages, but most independent restaurants don't — either no specials page or JS-heavy sites the scraper can't read. Expect Flow 2 to surface mostly chain/franchise deals.
 
 ---
