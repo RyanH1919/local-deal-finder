@@ -64,6 +64,99 @@ def extract_post(post: dict, use_haiku: bool = False) -> Optional[dict]:
         return None
 
 
+def reset_token_counts():
+    global _total_input_tokens, _total_output_tokens
+    _total_input_tokens = 0
+    _total_output_tokens = 0
+
+
+def get_token_counts() -> tuple[int, int]:
+    return _total_input_tokens, _total_output_tokens
+
+
+WEBSITE_SYSTEM_PROMPT = """You are a deal extractor for a local business deal finder app in the GTA.
+
+You will receive text scraped from a local business's own website. Decide whether the page is advertising a genuine customer deal (a discount, promotion, special, coupon, combo, limited-time offer, etc.) and extract it. Return a JSON object with exactly these fields:
+
+{
+  "is_deal": true or false,
+  "category": "one of: food, grocery, electronics, services, clothing, software, other",
+  "deal_description": "plain English description of the deal, 1-2 sentences",
+  "urgency": "limited_time or ongoing or unknown",
+  "scope": "local or online"
+}
+
+Rules:
+- is_deal is false if the page is just a menu, hours, an about page, or general info with no actual deal or promotion.
+- category: classify the business/deal into one of the seven buckets. Use 'food' for restaurants/cafes/takeout.
+- deal_description: 1-2 sentences, plain English, no marketing fluff. If is_deal is false, briefly say what the page is instead.
+- urgency: limited_time if there's an end date or "this week / today only" language; ongoing for permanent specials or loyalty programs; unknown if unclear.
+- scope: default to 'local' since this is a nearby business. Only use 'online' if the deal is clearly online-only or a national/chain-wide online promo (order-online-only, a promo code for the website).
+- Return only the JSON object, no explanation."""
+
+
+def extract_website_deal(post: dict, business_name: str, location: str,
+                         lat, lng, domain: str, content_hash: str,
+                         use_haiku: bool = True) -> dict:
+    """
+    Flow 2 (Phase 2): turn raw scraped website text into a clean deal via Haiku.
+
+    business_name / location / lat / lng come from Google Places — we already know
+    them, so we don't waste tokens asking the AI. We always return a dict (never
+    None): if it isn't a real deal or the AI response can't be parsed, we still
+    save a row with ai_processed=False so the content_hash is stored and we never
+    re-AI the same page.
+    """
+    global _total_input_tokens, _total_output_tokens
+    model = "claude-haiku-4-5-20251001" if use_haiku else "claude-sonnet-4-6"
+
+    # Safe defaults — used as-is if the page isn't a deal or parsing fails.
+    ai_fields = {
+        "is_deal": False,
+        "category": "other",
+        "deal_description": "(no deal detected on page)",
+        "urgency": "unknown",
+        "scope": "local",
+    }
+
+    try:
+        message = client.messages.create(
+            model=model,
+            max_tokens=300,
+            messages=[{"role": "user", "content": post["body"]}],
+            system=WEBSITE_SYSTEM_PROMPT,
+        )
+        _total_input_tokens += message.usage.input_tokens
+        _total_output_tokens += message.usage.output_tokens
+        raw = message.content[0].text.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        ai_fields.update(json.loads(raw.strip()))
+    except (json.JSONDecodeError, KeyError, IndexError):
+        print(f"[extractor] failed to parse website deal for: {business_name}")
+
+    is_deal = bool(ai_fields.get("is_deal"))
+    return {
+        "business_name":    business_name,
+        "deal_description": ai_fields.get("deal_description") or "(no description)",
+        "category":         ai_fields.get("category", "other"),
+        "scope":            ai_fields.get("scope", "local"),
+        "source_type":      "website",
+        "source_name":      domain,
+        "location":         location,
+        "lat":              lat,
+        "lng":              lng,
+        "source_url":       post["source_url"],
+        "subreddit":        None,
+        "posted_at":        None,
+        "urgency":          ai_fields.get("urgency", "unknown"),
+        "content_hash":     content_hash,
+        "ai_processed":     is_deal,
+    }
+
+
 def extract_posts(posts: list[dict], use_haiku: bool = False) -> list[dict]:
     global _total_input_tokens, _total_output_tokens
     _total_input_tokens = 0

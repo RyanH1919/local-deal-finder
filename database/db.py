@@ -90,7 +90,7 @@ def save_deal(deal: dict):
 def save_deals(deals: list[dict]):
     for deal in deals:
         save_deal(deal)
-    print(f"[db] {len(deals)} deals saved")
+    print(f"[db] {len(deals)} rows saved to db")
 
 
 def get_active_deals() -> list[dict]:

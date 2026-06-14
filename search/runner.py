@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from search.geocoder import geocode
 from search.places import find_nearby, get_place_website
 from search.deal_finder import find_deals_for_business
+from ai.extractor import extract_website_deal, reset_token_counts, get_token_counts
 from database.db import init_db, save_deals, get_content_hash
 
 
@@ -35,6 +36,7 @@ def run_search(item: str, address: str, radius_m: int = 3000):
     print(f"[search] {len(places)} places found — scraping each for deals...\n")
 
     init_db()
+    reset_token_counts()
     all_deals = []
 
     for place in places[:10]:
@@ -55,28 +57,31 @@ def run_search(item: str, address: str, radius_m: int = 3000):
         domain = urlparse(website).netloc
         for post in posts:
             # Fingerprint the scraped text. If it matches what we already stored
-            # for this URL, the deals haven't changed — skip it.
+            # for this URL, the deals haven't changed — skip it (no AI, no save).
             new_hash = hashlib.md5(post["body"].encode("utf-8")).hexdigest()
             if get_content_hash(post["source_url"]) == new_hash:
                 print(f"[search] '{name}' — unchanged since last crawl, skipping")
                 continue
 
-            all_deals.append({
-                "business_name":    name,
-                "deal_description": post["body"][:300],
-                "category":         item,
-                "scope":            "local",
-                "source_type":      "website",
-                "source_name":      domain,
-                "location":         place["address"],
-                "lat":              place["lat"],
-                "lng":              place["lng"],
-                "source_url":       post["source_url"],
-                "subreddit":        None,
-                "posted_at":        None,
-                "urgency":          "unknown",
-                "content_hash":     new_hash,
-            })
+            # New/changed page — send the scraped text to Haiku for a clean deal.
+            deal = extract_website_deal(
+                post,
+                business_name=name,
+                location=place["address"],
+                lat=place["lat"],
+                lng=place["lng"],
+                domain=domain,
+                content_hash=new_hash,
+                use_haiku=True,
+            )
+            tag = "deal" if deal["ai_processed"] else "no deal"
+            print(f"[search] '{name}' — {tag}: {deal['deal_description'][:60]}")
+            all_deals.append(deal)
 
     save_deals(all_deals)
-    print(f"[search] done — {len(all_deals)} deals saved/updated from Flow 2\n")
+    in_tok, out_tok = get_token_counts()
+    deal_count = sum(1 for d in all_deals if d["ai_processed"])
+    non_deal_count = len(all_deals) - deal_count
+    print(f"[search] tokens used — input={in_tok} output={out_tok}")
+    print(f"[search] done — {len(all_deals)} rows saved/updated "
+          f"({deal_count} deals, {non_deal_count} non-deals) from Flow 2\n")
