@@ -1,98 +1,77 @@
-"""
-Business website scraper — visits a business's own website and finds deal/special content.
+"""Business website scraper — orchestrator.
 
-Strategy:
-1. Visit the homepage
-2. Look for links that smell like deal pages (/specials, /deals, /offers, /promotions, etc.)
-3. Follow those links (same domain only, max MAX_PAGES total)
-4. Extract clean text from any page with deal signals
-5. Return post-like dicts for the AI pipeline
+Crawls a business's own site for deal content and returns "post-like" dicts for the
+AI pipeline. The crawl is a small same-domain breadth-first walk (max MAX_PAGES);
+each page is fetched, classified, and routed to an extractor, and every outcome is
+recorded for coverage metrics.
 
-Uses requests + BeautifulSoup. Works for ~80% of restaurant sites (static or server-rendered).
-JS-heavy sites (React/Vue SPAs) will get limited content — Playwright can be added later for those.
+Public API (kept stable so search/deal_finder.py + search/runner.py don't change):
+    scrape_business_website(url, business_name) -> list[dict]
 """
 
-import requests
+from collections import deque
 from urllib.parse import urljoin, urlparse
-from bs4 import BeautifulSoup
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-}
-
-DEAL_KEYWORDS = {
-    "deal", "deals", "special", "specials", "offer", "offers",
-    "promo", "promotion", "promotions", "discount", "coupon",
-    "happy-hour", "happyhour", "happy+hour", "savings", "sale",
-}
+from .classify import classify
+from .extractors import extract_deals, should_follow_link
+from .fetch import fetch_page
+from .metrics import ScrapeMetrics
 
 MAX_PAGES = 4   # max pages to visit per business site
-TIMEOUT = 8     # seconds per request
 
 
-def _same_domain(base: str, href: str) -> bool:
-    return urlparse(base).netloc == urlparse(urljoin(base, href)).netloc
+def scrape_business_website(url: str, business_name: str,
+                            metrics: ScrapeMetrics = None) -> list:
+    """Crawl a business website for deal content.
 
-
-def _has_deal_signal(text: str, href: str = "") -> bool:
-    combined = (text + " " + href).lower()
-    return any(kw in combined for kw in DEAL_KEYWORDS)
-
-
-def _clean_text(soup: BeautifulSoup) -> str:
-    """Strip navigation/scripts and return readable page text."""
-    for tag in soup(["script", "style", "nav", "footer", "header", "meta", "noscript"]):
-        tag.decompose()
-    return " ".join(soup.stripped_strings)[:3000]
-
-
-def scrape_business_website(url: str, business_name: str) -> list:
+    Returns a list of post-like dicts: {title, body, source_url, subreddit, posted_at}.
+    Pass a shared `metrics` to aggregate coverage across many sites (e.g. a future
+    scheduled crawl); when omitted, a per-site summary is printed.
     """
-    Crawl a business website for deal content.
-    Returns a list of post-like dicts (title, body, source_url, subreddit, posted_at).
-    """
+    standalone = metrics is None
+    metrics = metrics or ScrapeMetrics()
+    metrics.record_site()
+
     visited = set()
-    queue = [url]
+    queue = deque([url])
     results = []
 
     while queue and len(visited) < MAX_PAGES:
-        current = queue.pop(0)
+        current = queue.popleft()
         if current in visited:
             continue
         visited.add(current)
 
-        try:
-            resp = requests.get(current, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True)
-            if resp.status_code != 200:
-                continue
-            # Skip non-HTML responses
-            if "text/html" not in resp.headers.get("Content-Type", ""):
-                continue
-        except Exception as e:
-            print(f"[scraper] failed {current}: {e}")
-            continue
+        ctx = fetch_page(current, business_name)
+        ctx.page_type = classify(ctx)
 
-        soup = BeautifulSoup(resp.text, "lxml")
-        text = _clean_text(soup)
+        # Discover links from the pristine soup BEFORE extraction — extraction may
+        # strip nav/header/footer, which is exactly where menu/deal links live.
+        if ctx.soup is not None and len(visited) < MAX_PAGES:
+            for link in _discover_links(ctx.soup, url):
+                if link not in visited:
+                    queue.append(link)
 
-        if _has_deal_signal(text):
-            page_title = soup.title.string.strip() if soup.title else business_name
-            results.append({
-                "title": f"{business_name} — {page_title}",
-                "body": text,
-                "source_url": current,
-                "subreddit": "website",
-                "posted_at": None,
-            })
+        deals, outcome = extract_deals(ctx)
+        metrics.record_page(outcome, len(deals))
+        results.extend(d.as_post() for d in deals)
 
-        # Enqueue deal-looking links on same domain
-        if len(visited) < MAX_PAGES:
-            for a in soup.find_all("a", href=True):
-                href = a["href"].strip()
-                link_text = a.get_text()
-                if _has_deal_signal(link_text, href) and _same_domain(url, href):
-                    abs_url = urljoin(url, href).split("?")[0]  # drop query strings
-                    if abs_url not in visited:
-                        queue.append(abs_url)
-
+    if standalone:
+        print(metrics.summary())
     return results
+
+
+def _discover_links(soup, base_url: str) -> list:
+    """Same-domain links whose text/href suggest deals, menus, or specials."""
+    out = []
+    base_netloc = urlparse(base_url).netloc
+    for a in soup.find_all("a", href=True):
+        href = a["href"].strip()
+        if not href or href.startswith(("mailto:", "tel:", "javascript:")):
+            continue
+        if not should_follow_link(a.get_text(" ", strip=True), href):
+            continue
+        abs_url = urljoin(base_url, href).split("?")[0].split("#")[0]
+        if urlparse(abs_url).netloc == base_netloc:
+            out.append(abs_url)
+    return out
