@@ -22,24 +22,64 @@ def format_distance(metres: float) -> str:
     return f"{metres / 1000:.1f}km"
 
 
-def find_nearby(lat: float, lng: float, item: str, radius_m: int = 3000) -> list:
-    """Return businesses near lat/lng matching item, sorted by distance ascending."""
+_FOOD_TYPES = {
+    "burger", "burgers", "pizza", "sandwich", "sandwiches", "taco", "tacos",
+    "chicken", "wings", "fries", "hot dog", "hot dogs", "sub", "subs",
+    "wrap", "wraps", "poutine", "shawarma", "kebab", "noodle", "noodles",
+    "ramen", "sushi", "dim sum", "dumpling", "dumplings", "curry", "rice",
+    "breakfast", "brunch", "lunch", "dinner", "steak", "fish", "seafood",
+    "salad", "soup", "bbq", "barbecue", "donuts", "donut", "bagel", "bagels",
+}
+
+
+def _is_food_item(item: str) -> bool:
+    """True if any word in the search term is a known food keyword."""
+    words = item.lower().split()
+    return any(word in _FOOD_TYPES for word in words)
+
+
+def _fetch_places(lat: float, lng: float, keyword: str, radius_m: int, place_type: str = None) -> list:
     params = {
         "location": f"{lat},{lng}",
         "radius": radius_m,
-        "keyword": item,
+        "keyword": keyword,
         "key": GOOGLE_API_KEY,
     }
+    if place_type:
+        params["type"] = place_type
     response = requests.get(NEARBY_URL, params=params, timeout=10)
     response.raise_for_status()
     data = response.json()
-
     status = data.get("status")
     if status not in ("OK", "ZERO_RESULTS"):
         raise ValueError(f"Places API error: {status} — {data.get('error_message', '')}")
+    return data.get("results", [])
 
+
+def find_nearby(lat: float, lng: float, item: str, radius_m: int = 10000) -> list:
+    """Return businesses near lat/lng matching item, sorted by distance ascending.
+
+    For food items a second search is run with 'fast food <item>' so that
+    chains like McDonald's, Burger King, etc. are included alongside
+    sit-down restaurants.
+    """
+    raw = _fetch_places(lat, lng, item, radius_m)
+
+    if _is_food_item(item):
+        try:
+            extra = _fetch_places(lat, lng, item, radius_m, place_type="meal_takeaway")
+            raw = raw + extra
+        except ValueError:
+            pass  # don't fail main search if the extra call errors
+
+    # Deduplicate by place_id, keeping first occurrence
+    seen = set()
     places = []
-    for p in data.get("results", []):
+    for p in raw:
+        pid = p["place_id"]
+        if pid in seen:
+            continue
+        seen.add(pid)
         loc = p["geometry"]["location"]
         dist = _haversine_m(lat, lng, loc["lat"], loc["lng"])
         places.append({

@@ -10,24 +10,30 @@ _total_output_tokens = 0
 
 SYSTEM_PROMPT = """You are a deal extractor for a local deal finder app.
 
-You will receive a Reddit post that has been identified as a potential deal. Extract the deal details and return them as a JSON object with exactly these fields:
+You are a deal extractor for a local deal finder app. Extract deal details from a post and return a JSON object with exactly these fields:
 
 {
   "is_deal": true or false,
   "category": "one of: food, grocery, electronics, services, clothing, software, other",
   "business_name": "name of the business, or null if unknown",
-  "deal_description": "plain English description of the deal",
+  "deal_description": "1-2 sentence plain English description focused on WHAT the deal is, not background context",
+  "price_deal": "the deal price as a string (e.g. '$8.95', '$25', 'from $13.95', '2 for $20') or null if no specific price mentioned",
+  "price_original": "the regular/was price if stated (e.g. '$35.00') or null",
+  "discount_label": "short savings summary if calculable or stated (e.g. '50% off', 'BOGO', 'save $10', '$5 off') or null",
+  "min_spend": "minimum purchase required to unlock the deal (e.g. '$50 minimum') or null",
   "location": "city or neighbourhood if mentioned, or null",
-  "urgency": "limited_time or ongoing or unknown"
+  "urgency": "limited_time or ongoing or unknown",
+  "expires": "expiry date or time window as a short string if mentioned (e.g. 'ends Sunday', 'Mon-Fri until 10am') or null"
 }
 
 Rules:
-- is_deal should be false only if on closer reading this is not actually a deal
-- category: use 'food' for restaurants/cafes/food trucks, 'grocery' for supermarkets/raw ingredients, 'electronics' for tech/gadgets, 'services' for dental/medical/professional, 'clothing' for apparel, 'software' for apps/subscriptions, 'other' for anything else
-- business_name should be null if no specific business is named
-- deal_description should be 1-2 sentences max, plain English
-- location should be null if not mentioned
-- urgency is limited_time if the deal has an end date or says today only / this week etc, ongoing if it is a permanent menu item or loyalty program, unknown if unclear
+- is_deal: false only if on closer reading this is not actually a deal
+- category: 'food' for restaurants/cafes/food trucks, 'grocery' for supermarkets/raw ingredients, 'electronics' for tech/gadgets, 'services' for dental/medical/professional, 'clothing' for apparel, 'software' for apps/subscriptions, 'other' for anything else
+- price_deal: capture the actual price you pay. For ranges use 'from $X' or '$X-$Y'
+- price_original: only fill if the original price is explicitly stated — do not estimate
+- discount_label: derive from the text. If post says '50% off' use that. If post says was $20 now $10, use 'save $10 (50% off)'
+- deal_description: focus on the deal terms — what you get and for how much. Omit backstory
+- urgency: limited_time if end date/today only/this week; ongoing if permanent menu item or loyalty program; unknown if unclear
 - Return only the JSON object, no explanation"""
 
 
@@ -37,7 +43,7 @@ def extract_post(post: dict, use_haiku: bool = False) -> Optional[dict]:
     model = "claude-haiku-4-5-20251001" if use_haiku else "claude-sonnet-4-6"
     message = client.messages.create(
         model=model,
-        max_tokens=300,
+        max_tokens=400,
         messages=[{"role": "user", "content": text}],
         system=SYSTEM_PROMPT,
     )
