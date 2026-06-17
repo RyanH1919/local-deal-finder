@@ -20,20 +20,16 @@ GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID")
 
 # Subreddits to scrape — add or remove here without touching pipeline logic
 SUBREDDITS = [
-    # Community subreddits — organic, unfiltered deal mentions
-    "toronto",
-    "askTO",
-    "mississauga",
-    "brampton",
-    "GTA",
     # Deal communities
-    "TorontoDeals",
     "frugalcanada",
     "canadiandeals",
     "deals",
     # Food-focused
     "torontofood",
 ]
+
+# Posts older than this many days are skipped before keyword filter and AI
+MAX_POST_AGE_DAYS = 60
 
 # Keywords for pre-AI filter — post must contain at least one (case-insensitive)
 KEYWORDS = [
@@ -73,8 +69,8 @@ KEYWORDS = [
     "back to school", "seasonal sale", "overstock", "liquidation",
 ]
 
-# How many posts to fetch per subreddit per run
-POSTS_PER_SUBREDDIT = 100
+# How many subreddits to hit per pipeline run (25 posts each, 61s apart)
+SUBREDDITS_PER_RUN = 4
 
 # Schedule times (24-hour format)
 SCHEDULE_TIMES = [
