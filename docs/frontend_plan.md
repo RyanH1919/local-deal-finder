@@ -87,6 +87,21 @@ are marked.
 | `ai_processed`     | bool          | **No** — always 1 for served deals, ignore          |
 | `is_expired`       | bool          | **No** — always 0 for served deals, ignore          |
 
+**Price fields (added after this table was first written)** — these ride on every deal
+alongside the columns above. All `TEXT`, all nullable:
+
+| Field             | Type         | UI use                                              |
+|-------------------|--------------|-----------------------------------------------------|
+| `price_deal`      | string\|null | **Yes** — the price, shown prominently on the card  |
+| `price_original`  | string\|null | Maybe — struck-through "was" price                  |
+| `discount_label`  | string\|null | Maybe — savings badge (e.g. "50% off", "BOGO")      |
+| `min_spend`       | string\|null | Optional — "min. $50" note near the price           |
+| `expires`         | string\|null | Optional — expiry text shown with the urgency badge |
+
+Heads-up: these come from the **Reddit** extractor only for now — website deals leave them
+`null`, and even Reddit deals fill them only when a price was actually found. So treat them
+exactly like the nullable fields below: render each one only when present.
+
 **Two null-handling rules the UI must respect:**
 1. `business_name` can be `null` (some Reddit deals have no named business). Fall back
    to something like the category or "Deal" so the card never shows "null".
