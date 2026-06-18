@@ -1,8 +1,9 @@
 """Flow 2 — per-cell catalogue crawl.
 
 Crawls ONE grid cell on demand: discover businesses across categories, scrape the
-ones due for a refresh, extract deals, and persist — with per-cell and per-business
-caching. Does not touch the scheduler. See docs/flow2_grid_design.md.
+ones due for a refresh, extract structured deals, and persist — with per-cell and
+per-business caching, and yield metrics. Does not touch the scheduler. See
+docs/flow2_grid_design.md.
 """
 
 import hashlib
@@ -17,6 +18,7 @@ from scraper.metrics import ScrapeMetrics
 from scraper.website import scrape_business_website
 from search.places import find_nearby, get_place_website
 from crawl.grid import BUSINESS_TTL_DAYS, CATEGORIES, CELL_TTL_DAYS, cell_for_point
+from crawl.metrics import CrawlMetrics
 
 
 def crawl_cell(lat: float, lng: float, radius_m: int = None,
@@ -36,7 +38,8 @@ def crawl_cell(lat: float, lng: float, radius_m: int = None,
         return {"cell_id": cid, "skipped": True}
 
     reset_token_counts()
-    metrics = ScrapeMetrics()
+    scrape_metrics = ScrapeMetrics()
+    yield_metrics = CrawlMetrics(cid)
 
     # 1. Discover businesses across categories (dedupe by place_id).
     discovered = {}
@@ -47,8 +50,10 @@ def crawl_cell(lat: float, lng: float, radius_m: int = None,
             print(f"[crawl]   places error for '{category}': {e}")
             continue
         print(f"[crawl]   '{category}': {len(found)} businesses")
+        yield_metrics.record_query(category, len(found))
         for p in found:
             discovered.setdefault(p["place_id"], {**p, "category": category})
+    yield_metrics.set_businesses(len(discovered))
     for pid, p in discovered.items():
         upsert_business({
             "place_id": pid, "name": p["name"], "website": None,
@@ -56,10 +61,10 @@ def crawl_cell(lat: float, lng: float, radius_m: int = None,
         })
 
     # 2. Scrape businesses that are due (per-business cache).
-    all_deals, scraped, cached = [], 0, 0
+    all_deals = []
     for pid, p in discovered.items():
         if not force and not business_due_for_scrape(pid, BUSINESS_TTL_DAYS):
-            cached += 1
+            yield_metrics.record_cached()
             continue
         website = get_place_website(pid)
         upsert_business({
@@ -67,36 +72,37 @@ def crawl_cell(lat: float, lng: float, radius_m: int = None,
             "lat": p["lat"], "lng": p["lng"], "category": p["category"], "geohash": cid,
         })
         if not website:
-            mark_business_scraped(pid)   # nothing to scrape; respect TTL next cycle
+            mark_business_scraped(pid)        # nothing to scrape; respect TTL next cycle
+            yield_metrics.record_cached()
             continue
 
-        posts = scrape_business_website(website, p["name"], metrics=metrics)
+        posts = scrape_business_website(website, p["name"], metrics=scrape_metrics)
         domain = urlparse(website).netloc
         for post in posts:
             new_hash = hashlib.md5(post["body"].encode("utf-8")).hexdigest()
             if get_content_hash(post["source_url"]) == new_hash:
                 continue   # unchanged since last crawl — skip AI + save
-            all_deals.append(extract_website_deal(
+            deal = extract_website_deal(
                 post, business_name=p["name"], location=p.get("address", ""),
                 lat=p["lat"], lng=p["lng"], domain=domain,
                 content_hash=new_hash, use_haiku=True,
-            ))
+            )
+            all_deals.append(deal)
+            if deal["ai_processed"]:
+                yield_metrics.record_deal(p["category"])
         mark_business_scraped(pid)
-        scraped += 1
+        yield_metrics.record_scraped()
 
     # 3. Persist deals + record the crawl for the cell cache.
     save_deals(all_deals)
     record_crawled_area(cid, cell["lat"], cell["lng"], radius_m, ",".join(categories))
 
-    # 4. Summary.
+    # 4. Summaries.
     in_tok, out_tok = get_token_counts()
-    deal_count = sum(1 for d in all_deals if d["ai_processed"])
-    print(metrics.summary())
-    print(f"[crawl] cell {cid} done — {len(discovered)} businesses "
-          f"({scraped} scraped, {cached} cached), {deal_count} deals saved, "
-          f"tokens in={in_tok} out={out_tok}\n")
-    return {
-        "cell_id": cid, "skipped": False, "businesses": len(discovered),
-        "scraped": scraped, "cached": cached, "deals": deal_count,
-        "metrics": metrics.as_dict(),
-    }
+    print(scrape_metrics.summary())
+    print(yield_metrics.summary())
+    print(f"[crawl] cell {cid} done — tokens in={in_tok} out={out_tok}\n")
+
+    return {"cell_id": cid, "skipped": False,
+            **yield_metrics.as_dict(),
+            "scrape_metrics": scrape_metrics.as_dict()}

@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS deals (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     business_name    TEXT,
     deal_description TEXT NOT NULL,
+    price_deal       TEXT,
+    discount_label   TEXT,
     category         TEXT NOT NULL DEFAULT 'other',
     scope            TEXT NOT NULL DEFAULT 'online',
     source_type      TEXT NOT NULL DEFAULT 'social',

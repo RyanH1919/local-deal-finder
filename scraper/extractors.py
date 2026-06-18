@@ -221,7 +221,7 @@ def extract_deals(ctx: PageContext):
     pt = ctx.page_type
 
     if pt == PageType.STATIC_HTML:
-        deals = _dedupe(extract_jsonld(ctx) + extract_html_text(ctx))
+        deals = _merge_page(_dedupe(extract_jsonld(ctx) + extract_html_text(ctx)), ctx)
         return deals, ("deal_page" if deals else "no_signal")
 
     if pt == PageType.SPA:
@@ -250,3 +250,16 @@ def _dedupe(deals: list) -> list:
             seen.add(d.body)
             out.append(d)
     return out
+
+
+def _merge_page(deals: list, ctx: PageContext) -> list:
+    """Collapse all extractions from one page into a single post.
+
+    JSON-LD and the HTML text can each yield a deal for the same URL; emitting
+    them separately would double the AI calls and collide on source_url in the DB.
+    One page -> one post (combined body, one source_url).
+    """
+    if len(deals) <= 1:
+        return deals
+    body = "\n\n".join(d.body for d in deals)
+    return [DealText(title=deals[-1].title, body=body[:_MAX_BODY], source_url=ctx.url)]
