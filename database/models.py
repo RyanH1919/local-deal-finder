@@ -27,3 +27,32 @@ CREATE TABLE IF NOT EXISTS deals (
     is_expired       BOOLEAN NOT NULL DEFAULT 0
 )
 """
+
+# Flow 2 grid crawl — discovered businesses (dedupe + per-business scrape cache).
+CREATE_BUSINESSES_TABLE = """
+CREATE TABLE IF NOT EXISTS businesses (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    place_id        TEXT NOT NULL UNIQUE,
+    name            TEXT,
+    website         TEXT,
+    lat             REAL,
+    lng             REAL,
+    category        TEXT,
+    geohash         TEXT,
+    discovered_at   DATETIME NOT NULL,
+    last_scraped_at DATETIME
+)
+"""
+
+# Flow 2 grid crawl — per-cell crawl log (the grid cache from flow2_discussion D).
+CREATE_CRAWLED_AREAS_TABLE = """
+CREATE TABLE IF NOT EXISTS crawled_areas (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    cell_id    TEXT NOT NULL,
+    lat        REAL,
+    lng        REAL,
+    radius_m   INTEGER,
+    categories TEXT,
+    crawled_at DATETIME NOT NULL
+)
+"""

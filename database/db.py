@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timezone
-from database.models import CREATE_DEALS_TABLE, CREATE_SEEN_URLS_TABLE
+from datetime import datetime, timedelta, timezone
+from database.models import (
+    CREATE_BUSINESSES_TABLE,
+    CREATE_CRAWLED_AREAS_TABLE,
+    CREATE_DEALS_TABLE,
+    CREATE_SEEN_URLS_TABLE,
+)
 from config import DATABASE_PATH
 
 
@@ -16,6 +21,8 @@ def init_db():
     with get_connection() as conn:
         conn.execute(CREATE_DEALS_TABLE)
         conn.execute(CREATE_SEEN_URLS_TABLE)
+        conn.execute(CREATE_BUSINESSES_TABLE)
+        conn.execute(CREATE_CRAWLED_AREAS_TABLE)
 
 
 def url_exists(source_url: str) -> bool:
@@ -120,3 +127,78 @@ def expire_old_deals(expiry_hours: int):
             AND is_expired = 0
             AND fetched_at <= datetime('now', ? || ' hours')
         """, (f"-{expiry_hours}",))
+
+
+# --------------------------------------------------------------------------- #
+# Flow 2 grid crawl — businesses + crawled_areas
+# --------------------------------------------------------------------------- #
+
+def _parse_dt(val) -> datetime:
+    """Parse a stored datetime (sqlite returns ISO strings); assume UTC if naive."""
+    dt = val if isinstance(val, datetime) else datetime.fromisoformat(str(val))
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def upsert_business(b: dict):
+    """Insert or update a discovered business, deduped by place_id."""
+    with get_connection() as conn:
+        conn.execute("""
+            INSERT INTO businesses
+                (place_id, name, website, lat, lng, category, geohash, discovered_at)
+            VALUES
+                (:place_id, :name, :website, :lat, :lng, :category, :geohash, :discovered_at)
+            ON CONFLICT(place_id) DO UPDATE SET
+                name     = excluded.name,
+                website  = COALESCE(excluded.website, businesses.website),
+                lat      = excluded.lat,
+                lng      = excluded.lng,
+                category = COALESCE(businesses.category, excluded.category),
+                geohash  = excluded.geohash
+        """, {
+            "place_id":      b["place_id"],
+            "name":          b.get("name"),
+            "website":       b.get("website"),
+            "lat":           b.get("lat"),
+            "lng":           b.get("lng"),
+            "category":      b.get("category"),
+            "geohash":       b.get("geohash"),
+            "discovered_at": datetime.now(timezone.utc),
+        })
+
+
+def business_due_for_scrape(place_id: str, ttl_days: int) -> bool:
+    """True if the business has never been scraped or was scraped > ttl_days ago."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT last_scraped_at FROM businesses WHERE place_id = ?", (place_id,)
+        ).fetchone()
+    if row is None or row["last_scraped_at"] is None:
+        return True
+    return datetime.now(timezone.utc) - _parse_dt(row["last_scraped_at"]) > timedelta(days=ttl_days)
+
+
+def mark_business_scraped(place_id: str):
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE businesses SET last_scraped_at = ? WHERE place_id = ?",
+            (datetime.now(timezone.utc), place_id),
+        )
+
+
+def record_crawled_area(cell_id: str, lat: float, lng: float, radius_m: int, categories: str):
+    with get_connection() as conn:
+        conn.execute("""
+            INSERT INTO crawled_areas (cell_id, lat, lng, radius_m, categories, crawled_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (cell_id, lat, lng, radius_m, categories, datetime.now(timezone.utc)))
+
+
+def area_recently_crawled(cell_id: str, ttl_days: int) -> bool:
+    """True if this cell was crawled within the last ttl_days."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT MAX(crawled_at) AS last FROM crawled_areas WHERE cell_id = ?", (cell_id,)
+        ).fetchone()
+    if row is None or row["last"] is None:
+        return False
+    return datetime.now(timezone.utc) - _parse_dt(row["last"]) <= timedelta(days=ttl_days)
