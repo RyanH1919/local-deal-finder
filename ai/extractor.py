@@ -90,7 +90,8 @@ You will receive text scraped from a local business's own website. Decide whethe
 }
 
 Rules:
-- is_deal is false if the page is just a menu, hours, an about page, or general info with no actual deal or promotion. When false, set price_deal and discount_label to null and briefly say what the page is in deal_description.
+- is_deal is TRUE whenever the page shows a specific priced offer — a combo, special, "X for $Y", bundle, multi-buy, discount, coupon, happy hour, or a deals/specials/combos menu. Ongoing offers count (a permanent combo is still a deal). Set is_deal false ONLY when there is no pricing and no offer at all (a pure about / contact / hours / generic info page). When false, set price_deal and discount_label to null and say what the page is in deal_description.
+- Whenever the page shows a price for a combo/deal/special, capture it in price_deal — even if the offer is ongoing rather than time-limited.
 - price_deal: capture the real number(s) a customer pays. Keep it short — prices only, not a sentence. null if the page names no price.
 - discount_label: derive it when you can. '50% off' -> '50% off'; 'was $20, now $10' -> 'save $10 (50% off)'. null if there's nothing to claim.
 - deal_description: ONE sentence describing the offer itself (e.g. 'Large 2-topping pizza for $11.99 on Tuesdays'). Never "welcome to", company history, or opening hours.
