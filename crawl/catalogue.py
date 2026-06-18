@@ -87,6 +87,7 @@ def crawl_cell(lat: float, lng: float, radius_m: int = None,
                 lat=p["lat"], lng=p["lng"], domain=domain,
                 content_hash=new_hash, use_haiku=True,
             )
+            deal["geohash"] = cid   # stamp the cell for "deals in my cell" retrieval
             all_deals.append(deal)
             if deal["ai_processed"]:
                 yield_metrics.record_deal(p["category"])

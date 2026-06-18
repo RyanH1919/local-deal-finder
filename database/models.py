@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS deals (
     deal_description TEXT NOT NULL,
     price_deal       TEXT,
     discount_label   TEXT,
+    products         TEXT,
+    geohash          TEXT,
     category         TEXT NOT NULL DEFAULT 'other',
     scope            TEXT NOT NULL DEFAULT 'online',
     source_type      TEXT NOT NULL DEFAULT 'social',

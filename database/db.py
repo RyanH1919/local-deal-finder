@@ -22,6 +22,7 @@ _EXPECTED_DEAL_COLUMNS = {
     "subreddit": "TEXT", "posted_at": "DATETIME", "fetched_at": "DATETIME",
     "urgency": "TEXT", "content_hash": "TEXT", "ai_processed": "BOOLEAN",
     "is_expired": "BOOLEAN", "price_deal": "TEXT", "discount_label": "TEXT",
+    "products": "TEXT", "geohash": "TEXT",
 }
 
 
@@ -89,12 +90,12 @@ def save_deal(deal: dict):
     with get_connection() as conn:
         conn.execute("""
             INSERT INTO deals
-                (business_name, deal_description, price_deal, discount_label,
+                (business_name, deal_description, price_deal, discount_label, products, geohash,
                  category, scope, source_type, source_name,
                  location, lat, lng, source_url, subreddit, posted_at, fetched_at, urgency,
                  content_hash, ai_processed, is_expired)
             VALUES
-                (:business_name, :deal_description, :price_deal, :discount_label,
+                (:business_name, :deal_description, :price_deal, :discount_label, :products, :geohash,
                  :category, :scope, :source_type, :source_name,
                  :location, :lat, :lng, :source_url, :subreddit, :posted_at, :fetched_at, :urgency,
                  :content_hash, :ai_processed, 0)
@@ -102,6 +103,8 @@ def save_deal(deal: dict):
                 deal_description = excluded.deal_description,
                 price_deal       = excluded.price_deal,
                 discount_label   = excluded.discount_label,
+                products         = excluded.products,
+                geohash          = excluded.geohash,
                 category         = excluded.category,
                 urgency          = excluded.urgency,
                 content_hash     = excluded.content_hash,
@@ -122,6 +125,8 @@ def save_deal(deal: dict):
             "ai_processed":  deal.get("ai_processed", False),
             "price_deal":     deal.get("price_deal"),
             "discount_label": deal.get("discount_label"),
+            "products":       deal.get("products"),
+            "geohash":        deal.get("geohash"),
         })
 
 
@@ -139,6 +144,20 @@ def get_active_deals() -> list[dict]:
             AND ai_processed = 1
             ORDER BY fetched_at DESC
         """).fetchall()
+        return [dict(row) for row in rows]
+
+
+def get_deals_in_cell(geohash: str) -> list[dict]:
+    """Active deals in a geohash cell (prefix match, so a coarser cell includes
+    its sub-cells). This is the "deals in my cell" query for the frontend."""
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT * FROM deals
+            WHERE is_expired = 0
+            AND ai_processed = 1
+            AND geohash LIKE ? || '%'
+            ORDER BY fetched_at DESC
+        """, (geohash,)).fetchall()
         return [dict(row) for row in rows]
 
 

@@ -82,17 +82,19 @@ You will receive text scraped from a local business's own website. Decide whethe
   "is_deal": true or false,
   "category": "one of: food, grocery, electronics, services, clothing, software, other",
   "deal_description": "the deal in ONE tight sentence — what the customer gets. No marketing fluff, no backstory, no hours",
-  "price_deal": "the price as a short string (e.g. '$13', 'Medium $13 / XL $23', '2 for $20', 'from $9.99') or null if no price is shown",
+  "price_deal": "the single headline price as a short string (e.g. '$13', 'from $9.99', '2 for $20') or null if no price is shown",
   "discount_label": "the savings as a short string (e.g. '50% off', 'BOGO', 'save $5', '$2 off') or null if not stated or derivable",
+  "products": [{"name": "the item or combo", "price": "its price string", "discount": "its savings or null"}],
   "location": "neighbourhood or city if the page states one, or null",
   "urgency": "limited_time or ongoing or unknown",
   "scope": "local or online"
 }
 
 Rules:
-- is_deal is TRUE whenever the page shows a specific priced offer — a combo, special, "X for $Y", bundle, multi-buy, discount, coupon, happy hour, or a deals/specials/combos menu. Ongoing offers count (a permanent combo is still a deal). Set is_deal false ONLY when there is no pricing and no offer at all (a pure about / contact / hours / generic info page). When false, set price_deal and discount_label to null and say what the page is in deal_description.
+- is_deal is TRUE whenever the page shows a specific priced offer — a combo, special, "X for $Y", bundle, multi-buy, discount, coupon, happy hour, or a deals/specials/combos menu. Ongoing offers count (a permanent combo is still a deal). Set is_deal false ONLY when there is no pricing and no offer at all (a pure about / contact / hours / generic info page). When false, set price_deal and discount_label to null, products to [], and say what the page is in deal_description.
 - Whenever the page shows a price for a combo/deal/special, capture it in price_deal — even if the offer is ongoing rather than time-limited.
 - price_deal: capture the real number(s) a customer pays. Keep it short — prices only, not a sentence. null if the page names no price.
+- products: when the page lists SEVERAL priced offers (multiple combos, sizes, or specials), return one entry per distinct offer, each with its own name + price (+ discount if any). Use [] if there are none or only one. price_deal stays the single headline price; products is the full list.
 - discount_label: derive it when you can. '50% off' -> '50% off'; 'was $20, now $10' -> 'save $10 (50% off)'. null if there's nothing to claim.
 - deal_description: ONE sentence describing the offer itself (e.g. 'Large 2-topping pizza for $11.99 on Tuesdays'). Never "welcome to", company history, or opening hours.
 - category: classify into one of the seven buckets. Use 'food' for restaurants/cafes/takeout.
@@ -111,7 +113,7 @@ def extract_website_deal(post: dict, business_name: str, location: str,
     them, so we don't waste tokens asking the AI. We always return a dict (never
     None): if it isn't a real deal or the AI response can't be parsed, we still
     return a row with ai_processed=False so the content_hash is stored and we never
-    re-AI the same page.
+    re-AI the same page. `products` is a JSON-encoded list of the page's offers.
     """
     global _total_input_tokens, _total_output_tokens
     model = "claude-haiku-4-5-20251001" if use_haiku else "claude-sonnet-4-6"
@@ -123,6 +125,7 @@ def extract_website_deal(post: dict, business_name: str, location: str,
         "deal_description": "(no deal detected on page)",
         "price_deal": None,
         "discount_label": None,
+        "products": [],
         "location": None,
         "urgency": "unknown",
         "scope": "local",
@@ -131,7 +134,7 @@ def extract_website_deal(post: dict, business_name: str, location: str,
     try:
         message = client.messages.create(
             model=model,
-            max_tokens=400,
+            max_tokens=700,
             messages=[{"role": "user", "content": post["body"]}],
             system=WEBSITE_SYSTEM_PROMPT,
         )
@@ -152,6 +155,8 @@ def extract_website_deal(post: dict, business_name: str, location: str,
         "deal_description": ai_fields.get("deal_description") or "(no description)",
         "price_deal":       ai_fields.get("price_deal"),
         "discount_label":   ai_fields.get("discount_label"),
+        # The full list of offers on the page, JSON-encoded for the deals.products column.
+        "products":         json.dumps(ai_fields.get("products") or []),
         "category":         ai_fields.get("category", "other"),
         "scope":            ai_fields.get("scope", "local"),
         "source_type":      "website",
