@@ -39,8 +39,9 @@ crawled_areas  (id, cell_id, lat, lng, radius_m, categories, crawled_at)
 - `businesses` → discovery (coverage grows over time), dedupe by `place_id`, and the
   per-business scrape cache (`last_scraped_at`).
 - `crawled_areas` → the per-cell grid cache (Decision D).
-- `deals` is **unchanged**. Retrieval uses the `lat`/`lng` it already stores (§6); a
-  `geohash` column on `deals` is a Phase-2 indexing optimization, not required.
+- `deals` gained `products` (a JSON list of `{name, price, price_original, discount, vs_peers}`),
+  plus `price_deal`, `discount_label`, and `geohash` columns. Pre-existing DBs self-heal via
+  `_migrate_deals` on `init_db` (no manual rebuild).
 
 ## 4. Per-cell crawl flow
 For a cell (center `lat/lng`, `radius_m`, `geohash`):
@@ -63,12 +64,20 @@ For a cell (center `lat/lng`, `radius_m`, `geohash`):
 
 These three layers are what keep the binding cost (Anthropic Haiku per page) bounded.
 
-## 6. Retrieval (user → their cell's deals)
+## 6. Retrieval (user → their cell's deals) — IMPLEMENTED
 A DB read, **no crawl, no API cost**:
-- User location → `(lat, lng)`.
-- **Now:** bounding-box query on the `lat`/`lng` already stored on deals.
-- **Phase 2:** add a `geohash` column + index; match by geohash prefix for O(1)
-  "deals in cell E3" lookups, and extend `GET /deals` with a location filter.
+- Deals are stamped with their cell `geohash` at crawl time.
+- `GET /deals?lat=<>&lng=<>` resolves the point to its cell; `?cell=<geohash>` takes one
+  directly. Backed by `db.get_deals_in_cell()` (prefix match, so a coarser cell includes
+  its sub-cells). The `category`/`scope`/`urgency`/`location` filters still combine.
+
+## 6a. Peer pricing ("how much am I saving") — IMPLEMENTED
+Menu pages rarely state a regular price, so a saving is computed by comparison **within the
+cell's catalogue** (`crawl/compare.py`) — never a regional average, never fabricated:
+- **per business:** entry price vs the cell's other businesses → deal `vs_peers`
+  (e.g. "from $10.99 — ~8% below 1 nearby").
+- **per item:** same category+size across businesses → `products[i].vs_peers`.
+- no comparable peer → no `vs_peers` (price-only). It sharpens as the catalogue densifies.
 
 ## 7. Cost model
 Requests per full sweep ≈ `cells × categories × pages`. GTA ≈ 7,000 km².
@@ -79,12 +88,19 @@ Requests per full sweep ≈ `cells × categories × pages`. GTA ≈ 7,000 km².
   those** (density-adaptive) rather than shrinking the whole grid.
 
 ## 8. Phasing
-- **Phase 1 (this PR):** `crawl/grid.py` (geohash + cell generation + config), the
-  `businesses` + `crawled_areas` tables and DB functions, Places pagination, `crawl_cell()`,
-  the `--crawl` CLI for one cell, and offline tests. **Scheduler untouched.**
-- **Phase 2:** cron sweep over cells (rotation + discovery limits), geohash retrieval +
-  `GET /deals` location filter, density-adaptive subdivision, and the Tier-3 scraper
-  extractors (Playwright / PDF / vision).
+- **Phase 1 — DONE (this PR):** `crawl/grid.py` (geohash + cell generation + config),
+  `businesses` + `crawled_areas` tables + DB functions, Places pagination, `crawl_cell()`,
+  the `--crawl` CLI for one cell, and a committed offline suite (`tests/test_flow2.py`).
+  **The scheduler is still untouched.**
+- **Also shipped on top of Phase 1:**
+  - per-tenant **product lists** (`deals.products`) + structured `price_deal` / `discount_label`
+  - **Playwright** SPA rendering (`render_spa`; opt-in via `playwright install chromium`)
+  - **geohash retrieval** — `GET /deals?lat=&lng=` / `?cell=` (§6)
+  - **peer pricing** — each deal scored vs its cell (`vs_peers`, §6a)
+  - **self-healing migration** — old DBs backfill missing columns on `init_db`
+- **Phase 2 — remaining:** cron sweep over all GTA cells (rotation + discovery limits),
+  density-adaptive subdivision, real Tier-3 PDF/vision extractors, and mirroring the
+  structured fields onto the Reddit (Flow 1) path.
 
 ## 9. Testing one cell (no scheduler)
 ```
