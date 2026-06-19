@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database.db import get_active_deals, get_deals_in_cell, mark_expired
+from crawl.compare import annotate_peer_savings
 
 app = FastAPI()
 
@@ -32,7 +33,7 @@ def get_deals(location: str = None, urgency: str = None, scope: str = None,
         deals = [d for d in deals if d.get("scope") == scope]
     if category:
         deals = [d for d in deals if d.get("category") == category]
-    return deals
+    return annotate_peer_savings(deals)
 
 
 @app.post("/deals/{deal_id}/dismiss")

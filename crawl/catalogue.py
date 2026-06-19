@@ -11,14 +11,16 @@ from urllib.parse import urlparse
 
 from ai.extractor import extract_website_deal, get_token_counts, reset_token_counts
 from database.db import (
-    area_recently_crawled, business_due_for_scrape, get_content_hash, init_db,
-    mark_business_scraped, record_crawled_area, save_deals, upsert_business,
+    area_recently_crawled, business_due_for_scrape, get_content_hash,
+    get_deals_in_cell, init_db, mark_business_scraped, record_crawled_area,
+    save_deals, upsert_business,
 )
 from scraper.metrics import ScrapeMetrics
 from scraper.website import scrape_business_website
 from search.places import find_nearby, get_place_website
 from crawl.grid import BUSINESS_TTL_DAYS, CATEGORIES, CELL_TTL_DAYS, cell_for_point
 from crawl.metrics import CrawlMetrics
+from crawl.compare import annotate_peer_savings
 
 
 def crawl_cell(lat: float, lng: float, radius_m: int = None,
@@ -103,6 +105,13 @@ def crawl_cell(lat: float, lng: float, radius_m: int = None,
     print(scrape_metrics.summary())
     print(yield_metrics.summary())
     print(f"[crawl] cell {cid} done — tokens in={in_tok} out={out_tok}\n")
+
+    # 5. Peer comparison across the cell's catalogue (price standing vs others).
+    peered = [x for x in annotate_peer_savings(get_deals_in_cell(cid)) if x.get("vs_peers")]
+    if peered:
+        print("[peers] price standing vs others in this cell:")
+        for x in peered:
+            print(f"[peers]   {x['business_name']}: {x['vs_peers']}")
 
     return {"cell_id": cid, "skipped": False,
             **yield_metrics.as_dict(),
