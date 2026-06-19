@@ -84,7 +84,7 @@ You will receive text scraped from a local business's own website. Decide whethe
   "deal_description": "the deal in ONE tight sentence — what the customer gets. No marketing fluff, no backstory, no hours",
   "price_deal": "the single headline price as a short string (e.g. '$13', 'from $9.99', '2 for $20') or null if no price is shown",
   "discount_label": "the savings as a short string (e.g. '50% off', 'BOGO', 'save $5', '$2 off') or null if not stated or derivable",
-  "products": [{"name": "the item or combo", "price": "its price string", "discount": "its savings or null"}],
+  "products": [{"name": "the item or combo", "price": "its price", "price_original": "its regular/was price if the page shows one OR it can be totalled from listed parts, else null", "discount": "the saving like 'save $5' or '20% off' ONLY if derivable from a real reference, else null"}],
   "location": "neighbourhood or city if the page states one, or null",
   "urgency": "limited_time or ongoing or unknown",
   "scope": "local or online"
@@ -94,7 +94,8 @@ Rules:
 - is_deal is TRUE whenever the page shows a specific priced offer — a combo, special, "X for $Y", bundle, multi-buy, discount, coupon, happy hour, or a deals/specials/combos menu. Ongoing offers count (a permanent combo is still a deal). Set is_deal false ONLY when there is no pricing and no offer at all (a pure about / contact / hours / generic info page). When false, set price_deal and discount_label to null, products to [], and say what the page is in deal_description.
 - Whenever the page shows a price for a combo/deal/special, capture it in price_deal — even if the offer is ongoing rather than time-limited.
 - price_deal: capture the real number(s) a customer pays. Keep it short — prices only, not a sentence. null if the page names no price.
-- products: when the page lists SEVERAL priced offers (multiple combos, sizes, or specials), return one entry per distinct offer, each with its own name + price (+ discount if any). Use [] if there are none or only one. price_deal stays the single headline price; products is the full list.
+- products: when the page lists SEVERAL priced offers (multiple combos, sizes, or specials), return one entry per distinct offer. Use [] if there are none or only one. price_deal stays the single headline price; products is the full list.
+- per-product savings: set price_original and discount ONLY when the page gives a real basis — a stated was/regular price, an explicit "% off", OR a combo/multi-buy whose individual parts are priced on the SAME page (then price_original = those parts totalled, and discount = total minus the combo price, e.g. "save $5"). If the page gives no reference, leave both null. NEVER invent a regular price — a plain menu price is just a price, not a saving.
 - discount_label: derive it when you can. '50% off' -> '50% off'; 'was $20, now $10' -> 'save $10 (50% off)'. null if there's nothing to claim.
 - deal_description: ONE sentence describing the offer itself (e.g. 'Large 2-topping pizza for $11.99 on Tuesdays'). Never "welcome to", company history, or opening hours.
 - category: classify into one of the seven buckets. Use 'food' for restaurants/cafes/takeout.
