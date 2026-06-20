@@ -60,3 +60,11 @@ CREATE TABLE IF NOT EXISTS crawled_areas (
     crawled_at DATETIME NOT NULL
 )
 """
+
+# Flow 2 grid crawl — monthly Google Maps spend ledger (the budget cap).
+CREATE_API_SPEND_TABLE = """
+CREATE TABLE IF NOT EXISTS api_spend (
+    month TEXT PRIMARY KEY,
+    usd   REAL NOT NULL DEFAULT 0
+)
+"""

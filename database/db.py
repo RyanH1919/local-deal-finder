@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from database.models import (
+    CREATE_API_SPEND_TABLE,
     CREATE_BUSINESSES_TABLE,
     CREATE_CRAWLED_AREAS_TABLE,
     CREATE_DEALS_TABLE,
@@ -46,6 +47,7 @@ def init_db():
         conn.execute(CREATE_SEEN_URLS_TABLE)
         conn.execute(CREATE_BUSINESSES_TABLE)
         conn.execute(CREATE_CRAWLED_AREAS_TABLE)
+        conn.execute(CREATE_API_SPEND_TABLE)
         _migrate_deals(conn)
 
 
@@ -250,3 +252,24 @@ def area_recently_crawled(cell_id: str, ttl_days: int) -> bool:
     if row is None or row["last"] is None:
         return False
     return datetime.now(timezone.utc) - _parse_dt(row["last"]) <= timedelta(days=ttl_days)
+
+
+# --------------------------------------------------------------------------- #
+# Google Maps spend ledger (monthly budget cap)
+# --------------------------------------------------------------------------- #
+
+def add_api_spend(usd: float):
+    """Add `usd` to the current calendar month's running Google Maps spend."""
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    with get_connection() as conn:
+        conn.execute("""
+            INSERT INTO api_spend (month, usd) VALUES (?, ?)
+            ON CONFLICT(month) DO UPDATE SET usd = usd + excluded.usd
+        """, (month, usd))
+
+
+def api_spend_this_month() -> float:
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    with get_connection() as conn:
+        row = conn.execute("SELECT usd FROM api_spend WHERE month = ?", (month,)).fetchone()
+        return row["usd"] if row else 0.0

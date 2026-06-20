@@ -2,11 +2,12 @@
 
 Crawls ONE grid cell on demand: discover businesses across categories, scrape the
 ones due for a refresh, extract structured deals, and persist — with per-cell and
-per-business caching, and yield metrics. Does not touch the scheduler. See
-docs/flow2_grid_design.md.
+per-business caching, yield metrics, and a monthly Google-spend cap. Does not touch
+the scheduler. See docs/flow2_grid_design.md and docs/cost_model.md.
 """
 
 import hashlib
+import math
 from urllib.parse import urlparse
 
 from ai.extractor import extract_website_deal, get_token_counts, reset_token_counts
@@ -20,6 +21,7 @@ from scraper.website import scrape_business_website
 from search.places import find_nearby, get_place_website
 from crawl.grid import BUSINESS_TTL_DAYS, CATEGORIES, CELL_TTL_DAYS, cell_for_point
 from crawl.metrics import CrawlMetrics
+from crawl import budget
 
 MAX_EXTRACT_CHARS = 8000   # cap on the combined per-business text sent to the AI
 
@@ -39,19 +41,28 @@ def crawl_cell(lat: float, lng: float, radius_m: int = None,
     if not force and area_recently_crawled(cid, CELL_TTL_DAYS):
         print(f"[crawl] cell {cid} crawled within {CELL_TTL_DAYS}d — skipping (use --force)")
         return {"cell_id": cid, "skipped": True}
+    if budget.remaining() <= 0:
+        print(f"[budget] monthly cap reached (${budget.spent_this_month():.2f} / "
+              f"${budget.MONTHLY_CAP_USD:.0f}) — skipping cell {cid}")
+        return {"cell_id": cid, "skipped": "budget"}
 
     reset_token_counts()
     scrape_metrics = ScrapeMetrics()
     yield_metrics = CrawlMetrics(cid)
+    run_cost = 0.0
 
     # 1. Discover businesses across categories (dedupe by place_id).
     discovered = {}
     for category in categories:
+        if not budget.can_afford("nearby"):
+            print("[budget] cap reached — stopping category discovery")
+            break
         try:
             found = find_nearby(cell["lat"], cell["lng"], category, radius_m=radius_m)
         except Exception as e:
             print(f"[crawl]   places error for '{category}': {e}")
             continue
+        run_cost += budget.record("nearby", max(1, math.ceil(len(found) / 20)))
         print(f"[crawl]   '{category}': {len(found)} businesses")
         yield_metrics.record_query(category, len(found))
         for p in found:
@@ -63,13 +74,17 @@ def crawl_cell(lat: float, lng: float, radius_m: int = None,
             "lat": p["lat"], "lng": p["lng"], "category": p["category"], "geohash": cid,
         })
 
-    # 2. Scrape businesses that are due (per-business cache).
+    # 2. Scrape businesses that are due (per-business cache + budget cap).
     all_deals = []
     for pid, p in discovered.items():
         if not force and not business_due_for_scrape(pid, BUSINESS_TTL_DAYS):
             yield_metrics.record_cached()
             continue
+        if not budget.can_afford("details"):
+            print("[budget] cap reached — stopping business scrape")
+            break
         website = get_place_website(pid)
+        run_cost += budget.record("details")
         upsert_business({
             "place_id": pid, "name": p["name"], "website": website,
             "lat": p["lat"], "lng": p["lng"], "category": p["category"], "geohash": cid,
@@ -82,10 +97,9 @@ def crawl_cell(lat: float, lng: float, radius_m: int = None,
         posts = scrape_business_website(website, p["name"], metrics=scrape_metrics)
         domain = urlparse(website).netloc
         if posts:
-            # Combine the business's deal pages into ONE extraction. We can scrape
-            # more pages per site (MAX_PAGES) without multiplying Haiku calls, the AI
-            # sees the full pricing picture at once, and we get one deal per business
-            # (no more SIP-shows-up-4-times duplication).
+            # Combine the business's deal pages into ONE extraction: scrape more pages
+            # per site without multiplying Haiku calls, give the AI the full pricing
+            # picture, and get one deal per business (no per-page duplication).
             combined = "\n\n----\n\n".join(post["body"] for post in posts)[:MAX_EXTRACT_CHARS]
             new_hash = hashlib.md5(combined.encode("utf-8")).hexdigest()
             if get_content_hash(website) != new_hash:   # unchanged -> skip AI + save
@@ -109,8 +123,10 @@ def crawl_cell(lat: float, lng: float, radius_m: int = None,
     in_tok, out_tok = get_token_counts()
     print(scrape_metrics.summary())
     print(yield_metrics.summary())
-    print(f"[crawl] cell {cid} done — tokens in={in_tok} out={out_tok}\n")
+    print(f"[crawl] cell {cid} done — tokens in={in_tok} out={out_tok}")
+    print(f"[budget] maps ~${run_cost:.2f} this run | month ${budget.spent_this_month():.2f} / "
+          f"${budget.MONTHLY_CAP_USD:.0f} (${budget.remaining():.2f} left)\n")
 
-    return {"cell_id": cid, "skipped": False,
+    return {"cell_id": cid, "skipped": False, "maps_cost_run": round(run_cost, 2),
             **yield_metrics.as_dict(),
             "scrape_metrics": scrape_metrics.as_dict()}

@@ -63,6 +63,15 @@ def test_grid():
     _ok("grid: geohash vector, cell_for_point, iter_cells")
 
 
+def test_key_areas():
+    cells = grid.iter_key_area_cells()
+    ids = [c["cell_id"] for c in cells]
+    assert len(cells) >= len(grid.KEY_AREAS)   # at least one cell per curated node
+    assert len(set(ids)) == len(ids)           # deduped
+    assert len(cells) < 1000                    # far smaller than the full grid
+    _ok(f"key areas: {len(cells)} cells across {len(grid.KEY_AREAS)} nodes")
+
+
 def test_classify():
     def ctx(url, html, ct="text/html"):
         c = PageContext(url=url, content_type=ct, html=html,
@@ -255,10 +264,27 @@ def test_crawl_cell():
     _ok("crawl_cell: per-business merge — 2 pages -> 1 deal / 1 AI call")
 
 
+def test_budget():
+    import database.db as db
+    from crawl import budget
+    db.init_db()
+    start = budget.spent_this_month()
+    added = budget.record("nearby", 2)
+    assert abs(added - 0.064) < 1e-6, added
+    assert budget.spent_this_month() >= start + 0.064 - 1e-6
+    assert budget.can_afford("details") is True
+    db.add_api_spend(budget.MONTHLY_CAP_USD)        # push over the cap
+    assert budget.remaining() <= 0
+    assert budget.can_afford("nearby") is False     # paid calls now blocked
+    _ok("budget: records spend + cap blocks paid calls")
+
+
 if __name__ == "__main__":
-    for t in (test_grid, test_classify, test_extractors, test_extract_array_response,
-              test_db_roundtrip, test_compare, test_places_pagination, test_fetch_retry,
-              test_crawl_cell):
+    # test_budget runs last — it pushes spend over the cap, which would make
+    # crawl_cell skip on budget if it ran earlier.
+    for t in (test_grid, test_key_areas, test_classify, test_extractors,
+              test_extract_array_response, test_db_roundtrip, test_compare,
+              test_places_pagination, test_fetch_retry, test_crawl_cell, test_budget):
         t()
     try:
         os.remove(_TMP)

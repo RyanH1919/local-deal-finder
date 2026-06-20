@@ -132,3 +132,41 @@ def iter_cells(bbox=GTA_BBOX, precision: int = GEOHASH_PRECISION) -> list:
             lng += d_lng
         lat += d_lat
     return cells
+
+
+# Curated high-value GTA commercial areas — the crawl covers THESE, not the whole
+# map. This is what keeps a full sweep ~$45 instead of ~$2,500 (see docs/cost_model.md).
+KEY_AREAS = [
+    ("Toronto - Yonge & Dundas",        43.6561, -79.3802),
+    ("Toronto - Bloor & Yonge",         43.6709, -79.3863),
+    ("Toronto - Yonge & Eglinton",      43.7064, -79.3986),
+    ("Toronto - Yonge & Sheppard",      43.7615, -79.4111),
+    ("Scarborough Town Centre",         43.7765, -79.2570),
+    ("Etobicoke - Sherway Gardens",     43.6116, -79.5570),
+    ("Mississauga - Square One",        43.5930, -79.6420),
+    ("Mississauga - Cooksville",        43.5780, -79.6230),
+    ("Brampton - Bramalea City Centre", 43.7150, -79.7110),
+    ("Markham - Markville",             43.8600, -79.3200),
+    ("Vaughan - Vaughan Mills",         43.8250, -79.5380),
+    ("Richmond Hill - Yonge",           43.8800, -79.4380),
+    ("Oakville - Downtown",             43.4450, -79.6680),
+    ("Pickering - Town Centre",         43.8350, -79.0890),
+]
+
+
+def iter_key_area_cells(radius_km: float = 1.5, precision: int = GEOHASH_PRECISION) -> list:
+    """Cells covering the curated KEY_AREAS only — the under-budget coverage set.
+
+    Far fewer cells than the full grid (~180 vs ~10,000), which is what keeps Google
+    spend under the monthly cap. The scheduled sweep (Phase 2) iterates these.
+    """
+    seen, cells = set(), []
+    for _name, lat, lng in KEY_AREAS:
+        d_lat = radius_km / 111.0
+        d_lng = radius_km / (111.0 * math.cos(math.radians(lat)))
+        bbox = (lat - d_lat, lng - d_lng, lat + d_lat, lng + d_lng)
+        for c in iter_cells(bbox, precision):
+            if c["cell_id"] not in seen:
+                seen.add(c["cell_id"])
+                cells.append(c)
+    return cells
