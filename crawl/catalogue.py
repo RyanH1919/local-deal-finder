@@ -22,6 +22,8 @@ from crawl.grid import BUSINESS_TTL_DAYS, CATEGORIES, CELL_TTL_DAYS, cell_for_po
 from crawl.metrics import CrawlMetrics
 from crawl.compare import annotate_peer_savings
 
+MAX_EXTRACT_CHARS = 8000   # cap on the combined per-business text sent to the AI
+
 
 def crawl_cell(lat: float, lng: float, radius_m: int = None,
                categories: list = None, force: bool = False) -> dict:
@@ -80,19 +82,23 @@ def crawl_cell(lat: float, lng: float, radius_m: int = None,
 
         posts = scrape_business_website(website, p["name"], metrics=scrape_metrics)
         domain = urlparse(website).netloc
-        for post in posts:
-            new_hash = hashlib.md5(post["body"].encode("utf-8")).hexdigest()
-            if get_content_hash(post["source_url"]) == new_hash:
-                continue   # unchanged since last crawl — skip AI + save
-            deal = extract_website_deal(
-                post, business_name=p["name"], location=p.get("address", ""),
-                lat=p["lat"], lng=p["lng"], domain=domain,
-                content_hash=new_hash, use_haiku=True,
-            )
-            deal["geohash"] = cid   # stamp the cell for "deals in my cell" retrieval
-            all_deals.append(deal)
-            if deal["ai_processed"]:
-                yield_metrics.record_deal(p["category"])
+        if posts:
+            # Combine the business's deal pages into ONE extraction. We can scrape
+            # more pages per site (MAX_PAGES) without multiplying Haiku calls, the AI
+            # sees the full pricing picture at once, and we get one deal per business
+            # (no more SIP-shows-up-4-times duplication).
+            combined = "\n\n----\n\n".join(post["body"] for post in posts)[:MAX_EXTRACT_CHARS]
+            new_hash = hashlib.md5(combined.encode("utf-8")).hexdigest()
+            if get_content_hash(website) != new_hash:   # unchanged -> skip AI + save
+                deal = extract_website_deal(
+                    {"body": combined, "source_url": website}, business_name=p["name"],
+                    location=p.get("address", ""), lat=p["lat"], lng=p["lng"],
+                    domain=domain, content_hash=new_hash, use_haiku=True,
+                )
+                deal["geohash"] = cid   # stamp the cell for "deals in my cell" retrieval
+                all_deals.append(deal)
+                if deal["ai_processed"]:
+                    yield_metrics.record_deal(p["category"])
         mark_business_scraped(pid)
         yield_metrics.record_scraped()
 

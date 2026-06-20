@@ -182,19 +182,26 @@ def test_crawl_cell():
               "rating": 4.0, "distance_m": 200, "distance_label": "200m"}]
     CAT.find_nearby = lambda lat, lng, item, radius_m=None: list(found)
     CAT.get_place_website = lambda pid: "https://biz1.example" if pid == "p1" else None
+    # Biz1 has TWO deal pages — they must merge into ONE deal / ONE AI call.
     CAT.scrape_business_website = lambda website, name, metrics=None: [
-        {"title": "t", "body": "deal", "source_url": website + "/d", "subreddit": "website", "posted_at": None}]
-    CAT.extract_website_deal = lambda post, business_name, location, lat, lng, domain, content_hash, use_haiku=True: {
-        "business_name": business_name, "deal_description": "$10 pizza", "price_deal": "$10",
-        "discount_label": None, "products": json.dumps([{"name": "Large", "price": "$10"}]),
-        "category": "food", "scope": "local", "source_type": "website", "source_name": domain,
-        "location": location, "lat": lat, "lng": lng, "source_url": post["source_url"],
-        "subreddit": None, "posted_at": None, "urgency": "ongoing", "content_hash": content_hash,
-        "ai_processed": True}
+        {"title": "t", "body": "deal page one", "source_url": website + "/d1", "subreddit": "website", "posted_at": None},
+        {"title": "t", "body": "deal page two", "source_url": website + "/d2", "subreddit": "website", "posted_at": None}]
+    calls = {"extract": 0}
+
+    def _extract(post, business_name, location, lat, lng, domain, content_hash, use_haiku=True):
+        calls["extract"] += 1
+        return {"business_name": business_name, "deal_description": "$10 pizza", "price_deal": "$10",
+                "discount_label": None, "products": json.dumps([{"name": "Large", "price": "$10"}]),
+                "category": "food", "scope": "local", "source_type": "website", "source_name": domain,
+                "location": location, "lat": lat, "lng": lng, "source_url": post["source_url"],
+                "subreddit": None, "posted_at": None, "urgency": "ongoing", "content_hash": content_hash,
+                "ai_processed": True}
+    CAT.extract_website_deal = _extract
     res = CAT.crawl_cell(43.70, -79.40, categories=["pizza"], force=True)
-    assert (res["businesses"], res["scraped"], res["deals"]) == (2, 1, 1)
+    assert (res["businesses"], res["scraped"], res["deals"]) == (2, 1, 1), res
+    assert calls["extract"] == 1, calls           # 2 pages -> 1 AI call (per-business merge)
     assert res["deals_per_business"] == 1.0
-    _ok("crawl_cell: discover/scrape/extract/save + yield metrics (mocked)")
+    _ok("crawl_cell: per-business merge — 2 pages -> 1 deal / 1 AI call")
 
 
 if __name__ == "__main__":
