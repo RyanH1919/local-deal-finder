@@ -146,8 +146,21 @@ def extract_website_deal(post: dict, business_name: str, location: str,
             raw = raw.split("```")[1]
             if raw.startswith("json"):
                 raw = raw[4:]
-        ai_fields.update(json.loads(raw.strip()))
-    except (json.JSONDecodeError, KeyError, IndexError):
+        parsed = json.loads(raw.strip())
+        if isinstance(parsed, list):
+            # The model occasionally returns a JSON array of deals instead of one
+            # object — keep the first and merge any product lists across them.
+            dicts = [x for x in parsed if isinstance(x, dict)]
+            products = []
+            for x in dicts:
+                if isinstance(x.get("products"), list):
+                    products += x["products"]
+            parsed = dict(dicts[0]) if dicts else {}
+            if products:
+                parsed["products"] = products
+        if isinstance(parsed, dict):
+            ai_fields.update(parsed)
+    except (ValueError, TypeError, KeyError, IndexError, AttributeError):
         print(f"[extractor] failed to parse website deal for: {business_name}")
 
     is_deal = bool(ai_fields.get("is_deal"))

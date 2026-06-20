@@ -211,7 +211,11 @@ def _render_html(url: str):
             browser = p.chromium.launch(headless=True)
             try:
                 page = browser.new_page()
-                page.goto(url, wait_until="networkidle", timeout=15000)
+                page.goto(url, wait_until="domcontentloaded", timeout=15000)
+                try:
+                    page.wait_for_load_state("networkidle", timeout=4000)
+                except Exception:
+                    pass   # some sites never go network-idle (ads/analytics) — use what rendered
                 return page.content()
             finally:
                 browser.close()

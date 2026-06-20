@@ -102,6 +102,29 @@ def test_extractors():
     _ok("extractors: jsonld+html merged, boilerplate stripped, render_spa fallback")
 
 
+def test_extract_array_response():
+    import ai.extractor as EX
+
+    class _Msg:
+        def __init__(self, t):
+            self.content = [types.SimpleNamespace(text=t)]
+            self.usage = types.SimpleNamespace(input_tokens=1, output_tokens=1)
+
+    arr = json.dumps([
+        {"is_deal": True, "category": "food", "deal_description": "d1", "price_deal": "$10",
+         "discount_label": None, "products": [{"name": "A", "price": "$10"}],
+         "location": None, "urgency": "ongoing", "scope": "local"},
+        {"is_deal": True, "category": "food", "deal_description": "d2", "price_deal": "$12",
+         "products": [{"name": "B", "price": "$12"}]},
+    ])
+    EX.client = types.SimpleNamespace(messages=types.SimpleNamespace(create=lambda **k: _Msg(arr)))
+    d = EX.extract_website_deal({"body": "x", "source_url": "u"}, "Biz", "TO", 43.7, -79.4, "biz.ca", "h")
+    assert d["ai_processed"] is True, d
+    names = {p["name"] for p in json.loads(d["products"])}
+    assert names == {"A", "B"}, names      # products merged from both array items, no crash
+    _ok("extractor: handles a JSON-array response (merges, no crash)")
+
+
 def test_db_roundtrip():
     # An old-schema deals table (missing newer columns) must self-heal on init_db.
     c = sqlite3.connect(_TMP)
@@ -233,8 +256,9 @@ def test_crawl_cell():
 
 
 if __name__ == "__main__":
-    for t in (test_grid, test_classify, test_extractors, test_db_roundtrip,
-              test_compare, test_places_pagination, test_fetch_retry, test_crawl_cell):
+    for t in (test_grid, test_classify, test_extractors, test_extract_array_response,
+              test_db_roundtrip, test_compare, test_places_pagination, test_fetch_retry,
+              test_crawl_cell):
         t()
     try:
         os.remove(_TMP)
