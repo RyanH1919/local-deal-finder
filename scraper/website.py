@@ -17,7 +17,7 @@ from .extractors import extract_deals, should_follow_link
 from .fetch import fetch_page
 from .metrics import ScrapeMetrics
 
-MAX_PAGES = 4   # max pages to visit per business site
+MAX_PAGES = 8   # max pages to visit per business site (the AI call is per-business, not per-page)
 
 
 def scrape_business_website(url: str, business_name: str,
