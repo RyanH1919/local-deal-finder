@@ -175,6 +175,34 @@ def test_places_pagination():
     _ok("places: pagination across 2 pages")
 
 
+def test_fetch_retry():
+    from scraper import fetch as F
+
+    class _Resp:
+        def __init__(self, code=200, ct="text/html", text="<html><body>ok deals</body></html>"):
+            self.status_code = code
+            self.headers = {"Content-Type": ct}
+            self.text = text
+
+    F.time = types.SimpleNamespace(sleep=lambda *a, **k: None)   # no real backoff in tests
+
+    seq = [TimeoutError("timeout"), _Resp()]                     # fail once, then succeed
+    def _flaky(*a, **k):
+        x = seq.pop(0)
+        if isinstance(x, Exception):
+            raise x
+        return x
+    F.requests.get = _flaky
+    ctx = F.fetch_page("https://x.example/")
+    assert ctx.page_type != PageType.ERROR and ctx.html, (ctx.page_type, ctx.error)
+
+    def _down(*a, **k):
+        raise ConnectionError("down")
+    F.requests.get = _down
+    assert F.fetch_page("https://y.example/").page_type == PageType.ERROR
+    _ok("fetch: retries once on a transient failure, then errors")
+
+
 def test_crawl_cell():
     found = [{"name": "Biz1", "address": "1", "lat": 43.7, "lng": -79.4, "place_id": "p1",
               "rating": 4.5, "distance_m": 100, "distance_label": "100m"},
@@ -206,7 +234,7 @@ def test_crawl_cell():
 
 if __name__ == "__main__":
     for t in (test_grid, test_classify, test_extractors, test_db_roundtrip,
-              test_compare, test_places_pagination, test_crawl_cell):
+              test_compare, test_places_pagination, test_fetch_retry, test_crawl_cell):
         t()
     try:
         os.remove(_TMP)
