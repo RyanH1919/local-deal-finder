@@ -31,7 +31,25 @@ if __name__ == "__main__":
             parser.error("provide --address, or both --lat and --lng")
         cats = [c.strip() for c in args.categories.split(",")] if args.categories else None
         from crawl.catalogue import crawl_cell
-        crawl_cell(lat, lng, radius_m=args.radius, categories=cats, force=args.force)
+        summary = crawl_cell(lat, lng, radius_m=args.radius, categories=cats, force=args.force)
+        if not summary.get("skipped"):
+            import json
+            from database.db import get_deals_in_cell
+            from crawl.compare import annotate_peer_savings
+            deals = annotate_peer_savings(get_deals_in_cell(summary["cell_id"]))
+            print(f"\n=== {len(deals)} deal(s) in cell {summary['cell_id']} ===")
+            for d in deals:
+                print(f"\n{d['business_name']}  ·  {d.get('location') or ''}")
+                print(f"   DEAL:  {d.get('deal_description')}")
+                line = f"   PRICE: {d.get('price_deal') or '-'}"
+                if d.get("discount_label"):
+                    line += f"   |   DISCOUNT: {d['discount_label']}"
+                if d.get("vs_peers"):
+                    line += f"   |   {d['vs_peers']}"
+                print(line)
+                for p in json.loads(d.get("products") or "[]")[:8]:
+                    vp = f"   ({p['vs_peers']})" if p.get("vs_peers") else ""
+                    print(f"      - {str(p.get('name'))[:30]:30} {p.get('price')}{vp}")
     elif "--now" in sys.argv or "--test" in sys.argv:
         from scheduler.jobs import run_pipeline
         init_db()
