@@ -4,6 +4,11 @@ from database.models import CREATE_DEALS_TABLE, CREATE_SEEN_URLS_TABLE
 from config import DATABASE_PATH
 
 
+# Detail columns added after the initial schema shipped. Kept in one place so we
+# can backfill them onto a pre-existing deals table (see _migrate_deals_columns).
+_ADDED_DEAL_COLUMNS = ("price_deal", "price_original", "discount_label", "min_spend", "expires")
+
+
 def get_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(DATABASE_PATH)
     conn.row_factory = sqlite3.Row
@@ -14,6 +19,21 @@ def init_db():
     with get_connection() as conn:
         conn.execute(CREATE_DEALS_TABLE)
         conn.execute(CREATE_SEEN_URLS_TABLE)
+        _migrate_deals_columns(conn)
+
+
+def _migrate_deals_columns(conn):
+    """Backfill newly-introduced deal columns onto a pre-existing table.
+
+    SQLite has no 'ADD COLUMN IF NOT EXISTS', so we read the current columns from
+    PRAGMA table_info and add only the ones that are missing. Safe to run on every
+    startup: it's a no-op once the columns exist (and for a fresh DB the CREATE
+    TABLE above already includes them).
+    """
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(deals)")}
+    for name in _ADDED_DEAL_COLUMNS:
+        if name not in existing:
+            conn.execute(f"ALTER TABLE deals ADD COLUMN {name} TEXT")
 
 
 def url_exists(source_url: str) -> bool:
@@ -57,15 +77,22 @@ def save_deal(deal: dict):
     with get_connection() as conn:
         conn.execute("""
             INSERT INTO deals
-                (business_name, deal_description, category, scope, source_type, source_name,
+                (business_name, deal_description, price_deal, price_original, discount_label,
+                 min_spend, expires, category, scope, source_type, source_name,
                  location, lat, lng, source_url, subreddit, posted_at, fetched_at, urgency,
                  content_hash, ai_processed, is_expired)
             VALUES
-                (:business_name, :deal_description, :category, :scope, :source_type, :source_name,
+                (:business_name, :deal_description, :price_deal, :price_original, :discount_label,
+                 :min_spend, :expires, :category, :scope, :source_type, :source_name,
                  :location, :lat, :lng, :source_url, :subreddit, :posted_at, :fetched_at, :urgency,
                  :content_hash, :ai_processed, 0)
             ON CONFLICT(source_url) DO UPDATE SET
                 deal_description = excluded.deal_description,
+                price_deal       = excluded.price_deal,
+                price_original   = excluded.price_original,
+                discount_label   = excluded.discount_label,
+                min_spend        = excluded.min_spend,
+                expires          = excluded.expires,
                 category         = excluded.category,
                 urgency          = excluded.urgency,
                 content_hash     = excluded.content_hash,
@@ -84,6 +111,11 @@ def save_deal(deal: dict):
             "subreddit":     deal.get("subreddit"),
             "content_hash":  deal.get("content_hash"),
             "ai_processed":  deal.get("ai_processed", False),
+            "price_deal":     deal.get("price_deal"),
+            "price_original": deal.get("price_original"),
+            "discount_label": deal.get("discount_label"),
+            "min_spend":      deal.get("min_spend"),
+            "expires":        deal.get("expires"),
         })
 
 

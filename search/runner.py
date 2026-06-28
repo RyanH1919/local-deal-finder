@@ -13,12 +13,11 @@ from ai.extractor import extract_website_deal, reset_token_counts, get_token_cou
 from database.db import init_db, save_deals, get_content_hash
 
 
-def run_search(item: str, address: str, radius_m: int = 3000):
+def run_search(item: str, address: str, radius_m: int = 10000):
     print(f'\n[search] searching for "{item}" near "{address}"...\n')
 
     try:
         lat, lng = geocode(address)
-        print(f"[search] resolved to {lat:.5f}, {lng:.5f}")
     except ValueError as e:
         print(f"[search] ERROR: {e}")
         return
@@ -85,3 +84,78 @@ def run_search(item: str, address: str, radius_m: int = 3000):
     print(f"[search] tokens used — input={in_tok} output={out_tok}")
     print(f"[search] done — {len(all_deals)} rows saved/updated "
           f"({deal_count} deals, {non_deal_count} non-deals) from Flow 2\n")
+
+    # Pretty, human-readable summary of the deals saved this run.
+    _display(item, address, all_deals)
+
+
+def _price_line(d: dict) -> str:
+    """Build a compact price string from extracted deal fields.
+
+    Website deals don't carry price fields yet, so this returns "" and the
+    PRICE line is hidden. It lights up automatically once price extraction is
+    added to the website flow (the fields already exist on the Reddit path).
+    """
+    parts = []
+    if d.get("price_deal"):
+        parts.append(d["price_deal"])
+    if d.get("price_original"):
+        parts.append(f"was {d['price_original']}")
+    if d.get("discount_label"):
+        parts.append(d["discount_label"])
+    if d.get("min_spend"):
+        parts.append(f"min. {d['min_spend']}")
+    return "  ·  ".join(parts)
+
+
+def _source_label(url: str) -> str:
+    if not url:
+        return "unknown source"
+    if "reddit.com" in url:
+        # extract subreddit if present: /r/TorontoDeals/...
+        import re
+        m = re.search(r"/r/([^/]+)", url)
+        return f"reddit.com/r/{m.group(1)}" if m else "reddit.com"
+    # strip scheme and www, show just the domain
+    import re
+    domain = re.sub(r"^https?://(www\.)?", "", url).split("/")[0]
+    return domain
+
+
+def _urgency_label(urgency: str, expires: str) -> str:
+    label = {"limited_time": "[!] limited time", "ongoing": "[ok] ongoing"}.get(urgency, "[?] timing unknown")
+    if expires:
+        label += f" ({expires})"
+    return label
+
+
+def _display(item: str, address: str, deals: list):
+    deals_found = [d for d in deals if d.get("ai_processed")]
+
+    print("\n" + "=" * 62)
+    print(f'  {item.upper()} DEALS  ·  {address}')
+    print("=" * 62)
+
+    if not deals_found:
+        print("  No deals found at nearby businesses right now.\n")
+    else:
+        for d in deals_found:
+            print(f"\n  [DEAL] {d.get('business_name', 'Unknown')}")
+            if d.get("location"):
+                print(f"         {d['location']}")
+
+            price_str = _price_line(d)
+            if price_str:
+                print("")
+                print(f"         PRICE  {price_str}")
+
+            print("")
+            print(f"         {d.get('deal_description', 'Deal available')}")
+            print("")
+            urgency_str = _urgency_label(d.get("urgency", "unknown"), d.get("expires"))
+            source_str = _source_label(d.get("source_url", ""))
+            category = d.get("category", "other")
+            print(f"         [{category}]  {urgency_str}  ·  {source_str}")
+            print(f"         " + "-" * 50)
+
+    print("\n" + "=" * 62 + "\n")

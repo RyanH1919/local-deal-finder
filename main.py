@@ -8,7 +8,7 @@ if __name__ == "__main__":
         parser.add_argument("--search", action="store_true")
         parser.add_argument("--item", required=True, help='What to search for, e.g. "pizza"')
         parser.add_argument("--address", required=True, help='Your address, e.g. "2020 Shady Glen Rd, Toronto"')
-        parser.add_argument("--radius", type=int, default=3000, help="Search radius in metres (default 3000)")
+        parser.add_argument("--radius", type=int, default=10000, help="Search radius in metres (default 10000)")
         args = parser.parse_args()
         from search.runner import run_search
         run_search(args.item, args.address, radius_m=args.radius)
