@@ -84,21 +84,30 @@ def get_token_counts() -> tuple[int, int]:
 
 WEBSITE_SYSTEM_PROMPT = """You are a deal extractor for a local business deal finder app in the GTA.
 
-You will receive text scraped from a local business's own website. Decide whether the page is advertising a genuine customer deal (a discount, promotion, special, coupon, combo, limited-time offer, etc.) and extract it. Return a JSON object with exactly these fields:
+You will receive text scraped from a local business's own website. Decide whether the page is advertising a genuine customer deal (a discount, promotion, special, coupon, combo, limited-time offer, etc.) and extract it. We only care about four things: WHAT the deal is, the PRICE, the DISCOUNT, and WHERE. Return a JSON object with exactly these fields:
 
 {
   "is_deal": true or false,
   "category": "one of: food, grocery, electronics, services, clothing, software, other",
-  "deal_description": "plain English description of the deal, 1-2 sentences",
+  "deal_description": "the deal in ONE tight sentence — what the customer gets. No marketing fluff, no backstory, no hours",
+  "price_deal": "the single headline price as a short string (e.g. '$13', 'from $9.99', '2 for $20') or null if no price is shown",
+  "discount_label": "the savings as a short string (e.g. '50% off', 'BOGO', 'save $5', '$2 off') or null if not stated or derivable",
+  "products": [{"name": "the item or combo", "price": "its price", "price_original": "its regular/was price if the page shows one OR it can be totalled from listed parts, else null", "discount": "the saving like 'save $5' or '20% off' ONLY if derivable from a real reference, else null"}],
+  "location": "neighbourhood or city if the page states one, or null",
   "urgency": "limited_time or ongoing or unknown",
   "scope": "local or online"
 }
 
 Rules:
-- is_deal is false if the page is just a menu, hours, an about page, or general info with no actual deal or promotion.
-- category: classify the business/deal into one of the seven buckets. Use 'food' for restaurants/cafes/takeout.
-- deal_description: 1-2 sentences, plain English, no marketing fluff. If is_deal is false, briefly say what the page is instead.
-- urgency: limited_time if there's an end date or "this week / today only" language; ongoing for permanent specials or loyalty programs; unknown if unclear.
+- is_deal is TRUE whenever the page shows a specific priced offer — a combo, special, "X for $Y", bundle, multi-buy, discount, coupon, happy hour, or a deals/specials/combos menu. Ongoing offers count (a permanent combo is still a deal). Set is_deal false ONLY when there is no pricing and no offer at all (a pure about / contact / hours / generic info page). When false, set price_deal and discount_label to null, products to [], and say what the page is in deal_description.
+- Whenever the page shows a price for a combo/deal/special, capture it in price_deal — even if the offer is ongoing rather than time-limited.
+- price_deal: capture the real number(s) a customer pays. Keep it short — prices only, not a sentence. null if the page names no price.
+- products: when the page lists SEVERAL priced offers (multiple combos, sizes, or specials), return one entry per distinct offer. Use [] if there are none or only one. price_deal stays the single headline price; products is the full list.
+- per-product savings: if the page STATES a basis (a was/regular price or an explicit "% off"), use it as-is and do NOT tag it. Otherwise you MAY ESTIMATE the saving from the business's OWN pricing on the page — a combo/multi-buy vs the total of its component single prices, or a bundle's per-unit price vs the single-unit price of the same item — and TAG it: discount = "save ~$5 (est.)", with price_original = the reference you computed. Leave both null only when the page has no comparable price to reason from. Never use outside or market prices, and never invent a regular price out of nothing.
+- discount_label: derive it when you can. '50% off' -> '50% off'; 'was $20, now $10' -> 'save $10 (50% off)'. null if there's nothing to claim.
+- deal_description: ONE sentence describing the offer itself (e.g. 'Large 2-topping pizza for $11.99 on Tuesdays'). Never "welcome to", company history, or opening hours.
+- category: classify into one of the seven buckets. Use 'food' for restaurants/cafes/takeout.
+- urgency: limited_time if there's an end date or "this week / today only"; ongoing for permanent specials or loyalty programs; unknown if unclear.
 - scope: default to 'local' since this is a nearby business. Only use 'online' if the deal is clearly online-only or a national/chain-wide online promo (order-online-only, a promo code for the website).
 - Return only the JSON object, no explanation."""
 
@@ -107,13 +116,13 @@ def extract_website_deal(post: dict, business_name: str, location: str,
                          lat, lng, domain: str, content_hash: str,
                          use_haiku: bool = True) -> dict:
     """
-    Flow 2 (Phase 2): turn raw scraped website text into a clean deal via Haiku.
+    Flow 2: turn raw scraped website text into a clean, structured deal via Haiku.
 
     business_name / location / lat / lng come from Google Places — we already know
     them, so we don't waste tokens asking the AI. We always return a dict (never
     None): if it isn't a real deal or the AI response can't be parsed, we still
-    save a row with ai_processed=False so the content_hash is stored and we never
-    re-AI the same page.
+    return a row with ai_processed=False so the content_hash is stored and we never
+    re-AI the same page. `products` is a JSON-encoded list of the page's offers.
     """
     global _total_input_tokens, _total_output_tokens
     model = "claude-haiku-4-5-20251001" if use_haiku else "claude-sonnet-4-6"
@@ -123,6 +132,10 @@ def extract_website_deal(post: dict, business_name: str, location: str,
         "is_deal": False,
         "category": "other",
         "deal_description": "(no deal detected on page)",
+        "price_deal": None,
+        "discount_label": None,
+        "products": [],
+        "location": None,
         "urgency": "unknown",
         "scope": "local",
     }
@@ -130,7 +143,7 @@ def extract_website_deal(post: dict, business_name: str, location: str,
     try:
         message = client.messages.create(
             model=model,
-            max_tokens=300,
+            max_tokens=700,
             messages=[{"role": "user", "content": post["body"]}],
             system=WEBSITE_SYSTEM_PROMPT,
         )
@@ -141,19 +154,37 @@ def extract_website_deal(post: dict, business_name: str, location: str,
             raw = raw.split("```")[1]
             if raw.startswith("json"):
                 raw = raw[4:]
-        ai_fields.update(json.loads(raw.strip()))
-    except (json.JSONDecodeError, KeyError, IndexError):
+        parsed = json.loads(raw.strip())
+        if isinstance(parsed, list):
+            # The model occasionally returns a JSON array of deals instead of one
+            # object — keep the first and merge any product lists across them.
+            dicts = [x for x in parsed if isinstance(x, dict)]
+            products = []
+            for x in dicts:
+                if isinstance(x.get("products"), list):
+                    products += x["products"]
+            parsed = dict(dicts[0]) if dicts else {}
+            if products:
+                parsed["products"] = products
+        if isinstance(parsed, dict):
+            ai_fields.update(parsed)
+    except (ValueError, TypeError, KeyError, IndexError, AttributeError):
         print(f"[extractor] failed to parse website deal for: {business_name}")
 
     is_deal = bool(ai_fields.get("is_deal"))
     return {
         "business_name":    business_name,
         "deal_description": ai_fields.get("deal_description") or "(no description)",
+        "price_deal":       ai_fields.get("price_deal"),
+        "discount_label":   ai_fields.get("discount_label"),
+        # The full list of offers on the page, JSON-encoded for the deals.products column.
+        "products":         json.dumps(ai_fields.get("products") or []),
         "category":         ai_fields.get("category", "other"),
         "scope":            ai_fields.get("scope", "local"),
         "source_type":      "website",
         "source_name":      domain,
-        "location":         location,
+        # Prefer the precise Places location; fall back to anything the page named.
+        "location":         location or ai_fields.get("location"),
         "lat":              lat,
         "lng":              lng,
         "source_url":       post["source_url"],

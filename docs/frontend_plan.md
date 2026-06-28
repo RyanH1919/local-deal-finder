@@ -105,8 +105,47 @@ exactly like the nullable fields below: render each one only when present.
 **Two null-handling rules the UI must respect:**
 1. `business_name` can be `null` (some Reddit deals have no named business). Fall back
    to something like the category or "Deal" so the card never shows "null".
-2. `posted_at`, `location`, `lat`/`lng` can be `null` (website vs Reddit differences).
+2. `posted_at`, `location`, `lat`/`lng`, and all the Flow 2 fields below can be `null`.
    Only render them when present.
+
+### Flow 2 additions (built — use these for the deal card)
+
+The website-crawl flow (`crawl/`) now returns richer deals. New on `GET /deals`:
+
+**New query params** (combine with the existing ones):
+
+| Param         | Meaning                                                             |
+|---------------|---------------------------------------------------------------------|
+| `lat` & `lng` | user's location → resolved to its geohash cell ("deals in my cell") |
+| `cell`        | a geohash cell id directly                                          |
+
+`GET /deals?lat=43.73&lng=-79.60` returns just that cell's deals.
+
+**New deal fields:**
+
+| Field            | Type          | UI use                                                            |
+|------------------|---------------|-------------------------------------------------------------------|
+| `price_deal`     | string\|null  | headline price (e.g. "from $10.99")                               |
+| `discount_label` | string\|null  | advertised discount (e.g. "50% off") — null if none stated        |
+| `products`       | JSON string   | the tenant's offers: list of `{name, price, price_original, discount, vs_peers}` |
+| `vs_peers`       | string\|null  | deal-level price standing in its cell ("from $10.99 — ~8% below 1 nearby") |
+| `geohash`        | string\|null  | the deal's cell id (website deals only)                           |
+
+`products` is a JSON **string** — `JSON.parse` it. Each product may carry its own
+`vs_peers` ("~17% below 2 nearby"). Everything here is null/empty when the data isn't
+available (Reddit deals, or a page with no comparable peer) — render only when present.
+
+Example website deal:
+```json
+{
+  "business_name": "City South Pizza",
+  "price_deal": "from $10.99",
+  "discount_label": null,
+  "vs_peers": "from $10.99 — ~8% below 1 nearby",
+  "products": "[{\"name\":\"Single Topping Pizza\",\"price\":\"$10.99\",\"vs_peers\":null}]",
+  "category": "food", "scope": "local", "geohash": "dpz2u9"
+}
+```
 
 ---
 
