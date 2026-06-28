@@ -184,14 +184,44 @@ def _structured_text(soup) -> str:
 # --------------------------------------------------------------------------- #
 
 def render_spa(ctx: PageContext) -> list:
-    """HOOK: render a JS single-page app with a headless browser, then re-extract.
+    """Render a JS single-page app with a headless browser, then re-extract.
 
-    Phase 2: fetch ctx.url with Playwright, take page.content(), rebuild the soup,
-    then run extract_jsonld + extract_html_text on the rendered DOM. Returns [] for
-    now so the pipeline degrades gracefully; the 'needs_render' metric counts how
-    often this fires before we take on the Playwright dependency + runtime.
+    Uses Playwright when it's installed (`pip install playwright` then
+    `playwright install chromium`). If it isn't, returns [] so the pipeline
+    degrades gracefully and the 'needs_render' metric still flags the page.
     """
-    return []
+    html = _render_html(ctx.url)
+    if not html:
+        return []
+    from .fetch import make_soup
+    rctx = PageContext(url=ctx.url, business_name=ctx.business_name, status=200,
+                       content_type="text/html", html=html, soup=make_soup(html),
+                       page_type=PageType.STATIC_HTML)
+    return _merge_page(_dedupe(extract_jsonld(rctx) + extract_html_text(rctx)), rctx)
+
+
+def _render_html(url: str):
+    """Fully-rendered HTML via a headless browser, or None if unavailable/failed."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return None   # Playwright not installed — caller degrades gracefully
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            try:
+                page = browser.new_page()
+                page.goto(url, wait_until="domcontentloaded", timeout=15000)
+                try:
+                    page.wait_for_load_state("networkidle", timeout=4000)
+                except Exception:
+                    pass   # some sites never go network-idle (ads/analytics) — use what rendered
+                return page.content()
+            finally:
+                browser.close()
+    except Exception as e:
+        print(f"[scraper] render failed for {url}: {e}")
+        return None
 
 
 def extract_pdf(ctx: PageContext) -> list:
@@ -221,7 +251,7 @@ def extract_deals(ctx: PageContext):
     pt = ctx.page_type
 
     if pt == PageType.STATIC_HTML:
-        deals = _dedupe(extract_jsonld(ctx) + extract_html_text(ctx))
+        deals = _merge_page(_dedupe(extract_jsonld(ctx) + extract_html_text(ctx)), ctx)
         return deals, ("deal_page" if deals else "no_signal")
 
     if pt == PageType.SPA:
@@ -229,7 +259,10 @@ def extract_deals(ctx: PageContext):
         deals = extract_jsonld(ctx)
         if deals:
             return deals, "deal_page_jsonld"
-        return render_spa(ctx), "needs_render"
+        rendered = render_spa(ctx)
+        if rendered:
+            return rendered, "deal_page_rendered"
+        return [], "needs_render"
 
     if pt == PageType.PDF:
         return extract_pdf(ctx), "needs_pdf"
@@ -250,3 +283,16 @@ def _dedupe(deals: list) -> list:
             seen.add(d.body)
             out.append(d)
     return out
+
+
+def _merge_page(deals: list, ctx: PageContext) -> list:
+    """Collapse all extractions from one page into a single post.
+
+    JSON-LD and the HTML text can each yield a deal for the same URL; emitting
+    them separately would double the AI calls and collide on source_url in the DB.
+    One page -> one post (combined body, one source_url).
+    """
+    if len(deals) <= 1:
+        return deals
+    body = "\n\n".join(d.body for d in deals)
+    return [DealText(title=deals[-1].title, body=body[:_MAX_BODY], source_url=ctx.url)]

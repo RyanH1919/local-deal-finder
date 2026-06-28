@@ -1,14 +1,39 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timezone
-from database.models import CREATE_DEALS_TABLE, CREATE_SEEN_URLS_TABLE
+from datetime import datetime, timedelta, timezone
+from database.models import (
+    CREATE_API_SPEND_TABLE,
+    CREATE_BUSINESSES_TABLE,
+    CREATE_CRAWLED_AREAS_TABLE,
+    CREATE_DEALS_TABLE,
+    CREATE_SEEN_URLS_TABLE,
+)
 from config import DATABASE_PATH
 
 
-# Detail columns added after the initial schema shipped. Kept in one place so we
-# can backfill them onto a pre-existing deals table (see _migrate_deals_columns).
-_ADDED_DEAL_COLUMNS = ("price_deal", "price_original", "discount_label", "min_spend", "expires")
+# Every column the current deals schema declares. Used to backfill any that a
+# pre-existing table is missing — SQLite has no ADD COLUMN IF NOT EXISTS, so an
+# old DB (created before content_hash / scope / price_deal / ... existed) would
+# otherwise crash queries that reference the newer columns.
+_EXPECTED_DEAL_COLUMNS = {
+    "business_name": "TEXT", "deal_description": "TEXT", "category": "TEXT",
+    "scope": "TEXT", "source_type": "TEXT", "source_name": "TEXT",
+    "location": "TEXT", "lat": "REAL", "lng": "REAL", "source_url": "TEXT",
+    "subreddit": "TEXT", "posted_at": "DATETIME", "fetched_at": "DATETIME",
+    "urgency": "TEXT", "content_hash": "TEXT", "ai_processed": "BOOLEAN",
+    "is_expired": "BOOLEAN", "price_deal": "TEXT", "price_original": "TEXT",
+    "discount_label": "TEXT", "min_spend": "TEXT", "expires": "TEXT",
+    "products": "TEXT", "geohash": "TEXT", "vs_peers": "TEXT",
+}
+
+
+def _migrate_deals(conn):
+    """Backfill missing deal columns onto a pre-existing table. No-op once present."""
+    existing = {r["name"] for r in conn.execute("PRAGMA table_info(deals)")}
+    for name, coltype in _EXPECTED_DEAL_COLUMNS.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE deals ADD COLUMN {name} {coltype}")
 
 
 def get_connection() -> sqlite3.Connection:
@@ -21,21 +46,10 @@ def init_db():
     with get_connection() as conn:
         conn.execute(CREATE_DEALS_TABLE)
         conn.execute(CREATE_SEEN_URLS_TABLE)
-        _migrate_deals_columns(conn)
-
-
-def _migrate_deals_columns(conn):
-    """Backfill newly-introduced deal columns onto a pre-existing table.
-
-    SQLite has no 'ADD COLUMN IF NOT EXISTS', so we read the current columns from
-    PRAGMA table_info and add only the ones that are missing. Safe to run on every
-    startup: it's a no-op once the columns exist (and for a fresh DB the CREATE
-    TABLE above already includes them).
-    """
-    existing = {row["name"] for row in conn.execute("PRAGMA table_info(deals)")}
-    for name in _ADDED_DEAL_COLUMNS:
-        if name not in existing:
-            conn.execute(f"ALTER TABLE deals ADD COLUMN {name} TEXT")
+        conn.execute(CREATE_BUSINESSES_TABLE)
+        conn.execute(CREATE_CRAWLED_AREAS_TABLE)
+        conn.execute(CREATE_API_SPEND_TABLE)
+        _migrate_deals(conn)
 
 
 def url_exists(source_url: str) -> bool:
@@ -80,12 +94,12 @@ def save_deal(deal: dict):
         conn.execute("""
             INSERT INTO deals
                 (business_name, deal_description, price_deal, price_original, discount_label,
-                 min_spend, expires, category, scope, source_type, source_name,
+                 min_spend, expires, products, geohash, category, scope, source_type, source_name,
                  location, lat, lng, source_url, subreddit, posted_at, fetched_at, urgency,
                  content_hash, ai_processed, is_expired)
             VALUES
                 (:business_name, :deal_description, :price_deal, :price_original, :discount_label,
-                 :min_spend, :expires, :category, :scope, :source_type, :source_name,
+                 :min_spend, :expires, :products, :geohash, :category, :scope, :source_type, :source_name,
                  :location, :lat, :lng, :source_url, :subreddit, :posted_at, :fetched_at, :urgency,
                  :content_hash, :ai_processed, 0)
             ON CONFLICT(source_url) DO UPDATE SET
@@ -95,6 +109,8 @@ def save_deal(deal: dict):
                 discount_label   = excluded.discount_label,
                 min_spend        = excluded.min_spend,
                 expires          = excluded.expires,
+                products         = excluded.products,
+                geohash          = excluded.geohash,
                 category         = excluded.category,
                 urgency          = excluded.urgency,
                 content_hash     = excluded.content_hash,
@@ -118,6 +134,8 @@ def save_deal(deal: dict):
             "discount_label": deal.get("discount_label"),
             "min_spend":      deal.get("min_spend"),
             "expires":        deal.get("expires"),
+            "products":       deal.get("products"),
+            "geohash":        deal.get("geohash"),
         })
 
 
@@ -138,6 +156,35 @@ def get_active_deals() -> list[dict]:
         return [dict(row) for row in rows]
 
 
+def get_deals_in_cell(geohash: str) -> list[dict]:
+    """Active deals in a geohash cell (prefix match, so a coarser cell includes
+    its sub-cells). This is the "deals in my cell" query for the frontend."""
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT * FROM deals
+            WHERE is_expired = 0
+            AND ai_processed = 1
+            AND geohash LIKE ? || '%'
+            ORDER BY fetched_at DESC
+        """, (geohash,)).fetchall()
+        return [dict(row) for row in rows]
+
+
+def update_peer_savings(deals: list[dict]):
+    """Persist peer-comparison results computed by the post-crawl job.
+
+    annotate_peer_savings() sets deal['vs_peers'] and re-serializes deal['products']
+    (with per-product vs_peers baked in). We store both by id so the /deals endpoint
+    serves them as-is instead of recomputing medians on every request.
+    """
+    with get_connection() as conn:
+        conn.executemany(
+            "UPDATE deals SET vs_peers = :vs_peers, products = :products WHERE id = :id",
+            [{"id": d["id"], "vs_peers": d.get("vs_peers"), "products": d.get("products")}
+             for d in deals if d.get("id") is not None],
+        )
+
+
 def mark_expired(deal_id: int):
     with get_connection() as conn:
         conn.execute("UPDATE deals SET is_expired = 1 WHERE id = ?", (deal_id,))
@@ -152,3 +199,99 @@ def expire_old_deals(expiry_hours: int):
             AND is_expired = 0
             AND fetched_at <= datetime('now', ? || ' hours')
         """, (f"-{expiry_hours}",))
+
+
+# --------------------------------------------------------------------------- #
+# Flow 2 grid crawl — businesses + crawled_areas
+# --------------------------------------------------------------------------- #
+
+def _parse_dt(val) -> datetime:
+    """Parse a stored datetime (sqlite returns ISO strings); assume UTC if naive."""
+    dt = val if isinstance(val, datetime) else datetime.fromisoformat(str(val))
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def upsert_business(b: dict):
+    """Insert or update a discovered business, deduped by place_id."""
+    with get_connection() as conn:
+        conn.execute("""
+            INSERT INTO businesses
+                (place_id, name, website, lat, lng, category, geohash, discovered_at)
+            VALUES
+                (:place_id, :name, :website, :lat, :lng, :category, :geohash, :discovered_at)
+            ON CONFLICT(place_id) DO UPDATE SET
+                name     = excluded.name,
+                website  = COALESCE(excluded.website, businesses.website),
+                lat      = excluded.lat,
+                lng      = excluded.lng,
+                category = COALESCE(businesses.category, excluded.category),
+                geohash  = excluded.geohash
+        """, {
+            "place_id":      b["place_id"],
+            "name":          b.get("name"),
+            "website":       b.get("website"),
+            "lat":           b.get("lat"),
+            "lng":           b.get("lng"),
+            "category":      b.get("category"),
+            "geohash":       b.get("geohash"),
+            "discovered_at": datetime.now(timezone.utc),
+        })
+
+
+def business_due_for_scrape(place_id: str, ttl_days: int) -> bool:
+    """True if the business has never been scraped or was scraped > ttl_days ago."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT last_scraped_at FROM businesses WHERE place_id = ?", (place_id,)
+        ).fetchone()
+    if row is None or row["last_scraped_at"] is None:
+        return True
+    return datetime.now(timezone.utc) - _parse_dt(row["last_scraped_at"]) > timedelta(days=ttl_days)
+
+
+def mark_business_scraped(place_id: str):
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE businesses SET last_scraped_at = ? WHERE place_id = ?",
+            (datetime.now(timezone.utc), place_id),
+        )
+
+
+def record_crawled_area(cell_id: str, lat: float, lng: float, radius_m: int, categories: str):
+    with get_connection() as conn:
+        conn.execute("""
+            INSERT INTO crawled_areas (cell_id, lat, lng, radius_m, categories, crawled_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (cell_id, lat, lng, radius_m, categories, datetime.now(timezone.utc)))
+
+
+def area_recently_crawled(cell_id: str, ttl_days: int) -> bool:
+    """True if this cell was crawled within the last ttl_days."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT MAX(crawled_at) AS last FROM crawled_areas WHERE cell_id = ?", (cell_id,)
+        ).fetchone()
+    if row is None or row["last"] is None:
+        return False
+    return datetime.now(timezone.utc) - _parse_dt(row["last"]) <= timedelta(days=ttl_days)
+
+
+# --------------------------------------------------------------------------- #
+# Google Maps spend ledger (monthly budget cap)
+# --------------------------------------------------------------------------- #
+
+def add_api_spend(usd: float):
+    """Add `usd` to the current calendar month's running Google Maps spend."""
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    with get_connection() as conn:
+        conn.execute("""
+            INSERT INTO api_spend (month, usd) VALUES (?, ?)
+            ON CONFLICT(month) DO UPDATE SET usd = usd + excluded.usd
+        """, (month, usd))
+
+
+def api_spend_this_month() -> float:
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    with get_connection() as conn:
+        row = conn.execute("SELECT usd FROM api_spend WHERE month = ?", (month,)).fetchone()
+        return row["usd"] if row else 0.0
