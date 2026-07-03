@@ -1,12 +1,12 @@
 const API_BASE = "http://localhost:8000";
 
-export async function getDeals(filters = {}) {
+export async function getDeals(filters = {}, { signal } = {}) {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(filters)) {
     if (value) params.append(key, value);
   }
   const query = params.toString();
-  const res = await fetch(`${API_BASE}/deals${query ? `?${query}` : ""}`);
+  const res = await fetch(`${API_BASE}/deals${query ? `?${query}` : ""}`, { signal });
   if (!res.ok) throw new Error(`GET /deals failed: ${res.status} ${res.statusText}`);
   return res.json();
 }

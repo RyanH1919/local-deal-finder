@@ -26,7 +26,7 @@ const selectClass =
 
 function FilterSelect({ placeholder, options, value, onChange }) {
   return (
-    <select className={selectClass} value={value} onChange={(e) => onChange(e.target.value)}>
+    <select aria-label={placeholder} className={selectClass} value={value} onChange={(e) => onChange(e.target.value)}>
       <option value="">{placeholder}</option>
       {options.map((opt) => (
         <option key={opt.value} value={opt.value}>
@@ -43,8 +43,9 @@ export default function FilterBar({ filters, onFilterChange }) {
   return (
     <section className="bg-surface-container-low border border-outline-variant rounded-xl p-xs mb-sm mt-sm shadow-sm flex flex-col gap-xs sticky top-0 z-40">
       <div className="relative w-full">
-        <span className="material-symbols-outlined absolute left-sm top-1/2 transform -translate-y-1/2 text-outline text-[18px]">location_on</span>
+        <span aria-hidden="true" className="material-symbols-outlined absolute left-sm top-1/2 transform -translate-y-1/2 text-outline text-[18px]">location_on</span>
         <input
+          aria-label="Filter by location"
           className="w-full pl-lg pr-sm py-xs rounded-lg bg-surface-container border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md text-body-md text-on-surface transition-all placeholder:text-outline"
           placeholder="Location..."
           type="text"
@@ -58,9 +59,10 @@ export default function FilterBar({ filters, onFilterChange }) {
         <FilterSelect placeholder="Urgency" options={URGENCY_OPTIONS} value={filters.urgency} onChange={set("urgency")} />
         <button
           onClick={() => onFilterChange({ ...EMPTY_FILTERS })}
-          className="flex items-center gap-xs px-sm py-xs rounded-lg text-on-surface-variant hover:text-primary hover:bg-primary/10 transition-colors font-body-md text-body-md active:scale-95 duration-150"
+          disabled={!Object.values(filters).some(Boolean)}
+          className="flex items-center gap-xs px-sm py-xs rounded-lg text-on-surface-variant hover:text-primary hover:bg-primary/10 transition-colors font-body-md text-body-md active:scale-95 duration-150 disabled:opacity-40 disabled:pointer-events-none"
         >
-          <span className="material-symbols-outlined text-[18px]">restart_alt</span>
+          <span aria-hidden="true" className="material-symbols-outlined text-[18px]">restart_alt</span>
           <span>Reset</span>
         </button>
       </div>

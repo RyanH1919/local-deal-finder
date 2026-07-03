@@ -25,7 +25,7 @@ export default function DealCard({ deal, onDismiss }) {
   const urgencyLabel = URGENCY_LABELS[deal.urgency];
 
   return (
-    <article className="rounded-lg p-md card-shadow flex flex-col gap-xs relative overflow-hidden group">
+    <article className="w-full rounded-lg p-md card-shadow flex flex-col gap-xs relative overflow-hidden group">
       <div className="absolute top-0 right-0 w-32 h-32 bg-primary opacity-5 rounded-full blur-2xl group-hover:opacity-10 transition-opacity"></div>
 
       {/* Header: title, price, category */}
@@ -47,7 +47,7 @@ export default function DealCard({ deal, onDismiss }) {
           </div>
         )}
         <span className="font-label-caps text-label-caps text-tertiary uppercase tracking-widest flex items-center gap-xs">
-          <span className="material-symbols-outlined text-[14px]">{category.icon}</span> {category.label}
+          <span aria-hidden="true" className="material-symbols-outlined text-[14px]">{category.icon}</span> {category.label}
         </span>
       </div>
 
@@ -62,7 +62,7 @@ export default function DealCard({ deal, onDismiss }) {
       <div className="flex flex-wrap gap-base mt-sm z-10 relative">
         {deal.scope && (
           <span className="inline-flex items-center gap-xs bg-surface-container-highest text-on-surface font-label-caps text-[10px] px-2 py-1 rounded-sm border border-outline-variant">
-            <span className="material-symbols-outlined text-[12px]">
+            <span aria-hidden="true" className="material-symbols-outlined text-[12px]">
               {deal.scope === "online" ? "language" : "storefront"}
             </span>
             {deal.scope.toUpperCase()}
@@ -70,12 +70,12 @@ export default function DealCard({ deal, onDismiss }) {
         )}
         {urgencyLabel === "Ending Soon" && (
           <span className="inline-flex items-center gap-xs bg-error-container/20 text-error font-label-caps text-[10px] px-2 py-1 rounded-sm border border-error/30">
-            <span className="material-symbols-outlined text-[12px]">timer</span> ENDING SOON
+            <span aria-hidden="true" className="material-symbols-outlined text-[12px]">timer</span> ENDING SOON
           </span>
         )}
         {urgencyLabel === "Ongoing" && (
           <span className="inline-flex items-center gap-xs bg-tertiary/10 text-tertiary font-label-caps text-[10px] px-2 py-1 rounded-sm border border-tertiary/30">
-            <span className="material-symbols-outlined text-[12px]">event</span> ONGOING
+            <span aria-hidden="true" className="material-symbols-outlined text-[12px]">event</span> ONGOING
           </span>
         )}
         {hasPrice && deal.discount_label && (
@@ -90,26 +90,27 @@ export default function DealCard({ deal, onDismiss }) {
         <div className="flex flex-col">
           {deal.vs_peers && (
             <span className="font-body-md text-[12px] text-outline flex items-center gap-xs">
-              <span className="material-symbols-outlined text-[14px]">trending_down</span> {deal.vs_peers}
+              <span aria-hidden="true" className="material-symbols-outlined text-[14px]">trending_down</span> {deal.vs_peers}
             </span>
           )}
         </div>
         <div className="flex gap-xs">
           <button
             onClick={() => onDismiss(deal.id)}
-            aria-label="Dismiss deal"
+            aria-label={`Dismiss deal from ${title}`}
             className="bg-surface-container border border-outline-variant text-on-surface hover:bg-surface-container-high font-body-md text-sm px-sm py-xs rounded-full transition-colors flex items-center justify-center"
           >
-            <span className="material-symbols-outlined text-[18px]">close</span>
+            <span aria-hidden="true" className="material-symbols-outlined text-[18px]">close</span>
           </button>
           {deal.source_url && (
             <a
               href={deal.source_url}
               target="_blank"
               rel="noopener noreferrer"
+              aria-label={`View deal from ${title} (opens in new tab)`}
               className="bg-primary text-on-primary hover:bg-primary-fixed-dim font-label-caps text-label-caps px-sm py-xs rounded-full transition-colors flex items-center gap-xs"
             >
-              VIEW <span className="material-symbols-outlined text-[16px]">arrow_forward</span>
+              VIEW <span aria-hidden="true" className="material-symbols-outlined text-[16px]">arrow_forward</span>
             </a>
           )}
         </div>
