@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: 'Inter', sans-serif;
+  background-color: theme('colors.bg');
+  color: theme('colors.ink');
+  color-scheme: dark;
+}
+
+::selection {
+  background: rgba(245, 158, 11, 0.3);
+}
+
+/* Thin dark scrollbars for the feed column */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: theme('colors.line-2') transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: theme('colors.line-2');
+  border-radius: 5px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+select {
+  appearance: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235f6b7d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 0.5rem center;
+  background-size: 1em;
+}
+
+/* Leaflet dark-theme overrides */
+.leaflet-container {
+  background: theme('colors.bg');
+  font-family: 'Inter', sans-serif;
+}
+
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: theme('colors.surface-2');
+  color: theme('colors.ink');
+  border: 1px solid theme('colors.line-2');
+}
+
+.leaflet-popup-content a {
+  color: theme('colors.brand');
+}
+
+.leaflet-container .leaflet-control-attribution {
+  background: rgba(11, 13, 17, 0.7);
+  color: theme('colors.ink-faint');
+}
+
+.leaflet-container .leaflet-control-attribution a {
+  color: theme('colors.ink-dim');
+}
+
+.leaflet-bar a {
+  background: theme('colors.surface-2');
+  color: theme('colors.ink');
+  border-color: theme('colors.line-2');
+}
+
+.leaflet-bar a:hover {
+  background: theme('colors.surface-3');
+}
+
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+}
