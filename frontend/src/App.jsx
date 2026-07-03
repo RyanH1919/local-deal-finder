@@ -5,6 +5,7 @@ import FilterBar, { EMPTY_FILTERS } from "./components/FilterBar";
 import DealList from "./components/DealList";
 import MapPanel from "./components/MapPanel";
 import useDebounce from "./hooks/useDebounce";
+import { dealMinPrice, inPriceRange } from "./utils/deals";
 
 export default function App() {
   const [deals, setDeals] = useState([]);
@@ -27,7 +28,13 @@ export default function App() {
     }),
     [debouncedLocation, filters.category, filters.scope, filters.urgency]
   );
-  const filtersActive = Object.values(queryFilters).some(Boolean);
+
+  // Price range has no backend param — applied client-side over fetched deals.
+  const visibleDeals = useMemo(
+    () => deals.filter((d) => inPriceRange(dealMinPrice(d), filters.price)),
+    [deals, filters.price]
+  );
+  const filtersActive = Object.values(queryFilters).some(Boolean) || Boolean(filters.price);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -67,50 +74,50 @@ export default function App() {
   const showFullError = error && !hasLoaded;
 
   return (
-    <div className="bg-background text-on-background min-h-screen">
+    <div className="bg-bg text-ink min-h-screen font-body">
       <Header />
-      <div className="pt-[60px] flex h-screen overflow-hidden">
-        <main className="w-full lg:w-1/2 flex-shrink-0 px-margin-mobile md:px-margin-desktop overflow-y-auto pb-lg h-full border-r border-outline-variant">
+      <div className="pt-[56px] flex h-screen overflow-hidden">
+        <main className="w-full lg:w-1/2 flex-shrink-0 px-margin-mobile md:px-margin-desktop overflow-y-auto pb-lg h-full border-r border-line">
           <FilterBar filters={filters} onFilterChange={setFilters} />
 
           {actionError && (
-            <div role="alert" className="flex items-center gap-xs mb-sm px-sm py-xs rounded-lg bg-error-container/20 border border-error/30 text-error font-body-md text-body-md">
-              <span className="material-symbols-outlined text-[18px]" aria-hidden="true">warning</span>
+            <div role="alert" className="flex items-center gap-xs mb-sm px-sm py-xs rounded-lg bg-warn/10 border border-warn/25 text-warn text-sm">
+              <span aria-hidden="true" className="material-symbols-outlined text-[18px]">warning</span>
               {actionError}
             </div>
           )}
 
           {showInitialLoading ? (
             <div role="status" className="flex flex-col items-center gap-sm py-xl text-center">
-              <span className="material-symbols-outlined text-[40px] text-outline animate-spin" aria-hidden="true">progress_activity</span>
-              <p className="font-body-md text-body-md text-on-surface-variant">Loading deals…</p>
+              <span aria-hidden="true" className="material-symbols-outlined text-[36px] text-ink-faint animate-spin">progress_activity</span>
+              <p className="text-sm text-ink-dim">Loading deals…</p>
             </div>
           ) : showFullError ? (
             <div role="alert" className="flex flex-col items-center gap-sm py-xl text-center">
-              <span className="material-symbols-outlined text-[40px] text-error" aria-hidden="true">error</span>
-              <p className="font-body-md text-body-md text-on-surface-variant">Couldn't load deals. Is the API running?</p>
+              <span aria-hidden="true" className="material-symbols-outlined text-[36px] text-warn">error</span>
+              <p className="text-sm text-ink-dim">Couldn't load deals. Is the API running?</p>
               <button
                 onClick={retry}
-                className="bg-primary text-on-primary hover:bg-primary-fixed-dim font-label-caps text-label-caps px-md py-xs rounded-full transition-colors"
+                className="h-9 px-md rounded-lg bg-brand text-on-brand hover:bg-brand-hi text-[13px] font-semibold transition-colors"
               >
-                RETRY
+                Retry
               </button>
             </div>
           ) : (
             <>
               {error && (
-                <div role="alert" className="flex items-center justify-between gap-xs mb-sm px-sm py-xs rounded-lg bg-error-container/20 border border-error/30 text-error font-body-md text-body-md">
+                <div role="alert" className="flex items-center justify-between gap-xs mb-sm px-sm py-xs rounded-lg bg-warn/10 border border-warn/25 text-warn text-sm">
                   <span>Couldn't refresh deals.</span>
-                  <button onClick={retry} className="underline hover:text-on-error-container transition-colors">Retry</button>
+                  <button onClick={retry} className="underline hover:text-ink transition-colors">Retry</button>
                 </div>
               )}
               <div aria-busy={fetching} className={fetching ? "opacity-60 transition-opacity" : "transition-opacity"}>
-                <DealList deals={deals} onDismiss={handleDismiss} filtersActive={filtersActive} />
+                <DealList deals={visibleDeals} onDismiss={handleDismiss} filtersActive={filtersActive} />
               </div>
             </>
           )}
         </main>
-        <MapPanel dealCount={deals.length} />
+        <MapPanel deals={visibleDeals} />
       </div>
     </div>
   );

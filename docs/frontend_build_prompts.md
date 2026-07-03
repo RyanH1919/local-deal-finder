@@ -280,8 +280,112 @@ Read-only — don't modify anything.
 
 ---
 
-## Not in this sequence (Layer 2 — later, separate session)
-- `MapPanel.jsx` with real Leaflet, plotting deals with non-null lat/lng
-- Client-side price-range filtering (no backend param exists yet)
-- Rendering the `products` JSON field
-- Any restyling beyond what the wireframe already specifies
+## Layer 2 — Stage 1: Real map + data-driven features
+
+Fable gets more creative freedom here than in Layer 1 — the app is functionally
+complete and verified, so this round is about judgment calls (how should the map
+interact, is client-side price parsing worth it), not spec-following.
+
+### BUILD L2-1 (Fable)
+```
+Layer 1 is complete, verified, and merged (fetch, filter, dismiss, loading/error/empty
+states, request-race handling via AbortController, debounced search, optimistic dismiss
+with rollback, an accessibility pass). This is Layer 2 — the parts explicitly deferred
+earlier. No commentary, terse responses only — just build.
+
+You have significant creative freedom here — more than Layer 1. This app can be
+substantially changed if you think that's the right call; nothing currently on screen is
+precious and we can always redo it. The one hard constraint that doesn't change: do NOT
+modify anything in api/, database/, or any other backend code. If a feature would
+genuinely be better served by a backend change, describe it as a recommendation instead
+of implementing it — same as your last pass.
+
+Build these three things, using your judgment on how:
+
+1. Real map — replace the MapPanel placeholder. Use Leaflet (react-leaflet or vanilla
+   Leaflet, your call) to plot deals that have non-null lat/lng as pins, synced with the
+   currently filtered/visible deal list. Deals without coordinates (most Reddit/online
+   deals) simply won't have a pin — expected, not something to work around. Clicking a
+   pin should surface that deal's info somehow — your call on the exact interaction.
+2. Price-range filtering — there's no backend parameter for this; price_deal is
+   free-form text like "$8.99" or "from $10.99". Either parse it client-side
+   best-effort and filter locally, or skip implementing it and describe why/what backend
+   support would make it clean instead. Your call.
+3. The products field — some deals carry a JSON list of priced items
+   (name/price/price_original/discount/vs_peers), currently unused anywhere. Decide
+   whether/where it belongs (e.g. an expandable section on the card) or skip it if you
+   don't think it adds value yet.
+
+At the end give me three lists, nothing else:
+1. What you built and how.
+2. What you decided to skip and why.
+3. Any backend recommendations, if any.
+```
+
+### EXPLAIN L2-1 (Sonnet/Haiku)
+```
+Same context as before — I'm learning frontend, strong in Python/backend. Fable just
+built Layer 2 map + data features for my project at c:\Projects\local-deal-finder\frontend.
+Read whatever it created/changed (likely a new MapPanel implementation, possibly
+price-filter logic, possibly a products renderer on DealCard) and explain:
+
+1. How the map actually works — how it gets from a deal's lat/lng to a rendered pin, and
+   how it stays in sync with the filtered deal list.
+2. If price-range filtering was implemented: how the free-form price_deal text gets
+   parsed into something comparable, and what edge cases that parsing has to handle
+   (missing $ sign, "from $X", ranges, no price at all).
+3. If the products field was rendered: how that decision fits with the rest of the card,
+   and what data shape it expects.
+4. Any design/architecture decisions Fable made that go beyond just "implementing a
+   spec" — this stage had real judgment calls, call out what stands out.
+
+Read-only — don't modify anything.
+```
+
+**Verify before moving on:** map shows real pins for deals that actually have lat/lng
+(cross-check against the DB — Flow 2/local-business deals should have coordinates,
+Reddit/online ones won't); clicking a pin does something sensible; nothing from Layer 1
+(fetch/filter/dismiss/states) broke.
+
+---
+
+## Layer 2 — Stage 2: Visual/branding pass
+
+### BUILD L2-2 (Fable)
+```
+Now do a genuine visual redesign pass on the whole app. This is open — colors,
+typography, layout, spacing, the overall look and feel. Nothing currently on screen's
+styling is locked in; treat this as: if you were designing this product for real, what
+would you actually do? No commentary, terse responses only — just build.
+
+Constraints: keep the app name exactly as "LocalDealFinder" — don't rename
+it, redesign around it. Still frontend-only, still don't touch backend code. Keep it
+functionally correct — nothing you change here should break fetching, filtering,
+dismissing, or the map from the previous stage.
+
+At the end give me one short list: what direction you took and why.
+```
+
+### EXPLAIN L2-2 (Sonnet/Haiku)
+```
+Same context — learning frontend. Fable just did an open visual/branding redesign pass
+on my project at c:\Projects\local-deal-finder\frontend. Read the current state of the
+app (src/index.css, tailwind.config.js, and any components that changed) and explain:
+
+1. What actually changed visually and where in the code that change lives (e.g. a
+   Tailwind config value, a specific component's className, a new CSS rule).
+2. Any new patterns introduced (new utility classes, new component structure, new
+   design tokens) I should understand before working in this codebase again.
+3. Whether anything here looks like it should get a second look from Noah before Layer 2
+   is considered final.
+
+Read-only — don't modify anything.
+```
+
+**Verify before moving on:** full manual walkthrough again — fetch, filter, dismiss,
+map, error state — confirm nothing regressed under the new visuals.
+
+## Not in this sequence
+- Anything requiring an actual backend change (pagination, SQL-side filtering, etc. —
+  see the "Backend recommendations" list in the vault's Frontend.md) — needs a
+  deliberate look before implementing, not part of a frontend-only pass
